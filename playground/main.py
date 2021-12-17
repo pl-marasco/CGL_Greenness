@@ -8,6 +8,7 @@ import pycurl
 import certifi
 import glob
 import os
+import dask
 
 
 from distributed import LocalCluster, Client
@@ -171,6 +172,129 @@ def download(pack):
 
         return failed
 
+@dask.delayed
+def analyzer(tile_folder, local_folder):
+
+    filenames_500 = list_hdf_folder(local_folder, tile_folder[1])[-5:]
+    filenames_250 = list_hdf_folder(local_folder, tile_folder[0])[-5:]
+
+    if not len(filenames_500) == 5 or not len(filenames_250) == 5:
+        print(
+            f'Not enought scenes on {tile_folder[0]} [{len(filenames_250)}] or {tile_folder[1]}[{len(filenames_500)}]')
+        return
+
+    filenames = zip(filenames_250, filenames_500)
+
+    scenes = []
+
+    for i in filenames:
+        filename_250, filename_500 = i
+
+        with riox.open_rasterio(filename_250,
+                                mask_and_scale=True,
+                                chunks='auto',
+                                lock=False,
+                                variable=['sur_refl_b01', 'sur_refl_b02', 'sur_refl_state_250m']
+                                ) as ds_250:
+            Qbits_250 = xr.apply_ufunc(_unpackbits, ds_250.sur_refl_state_250m.astype(np.uint16),
+                                       kwargs={'num_bits': 16},
+                                       input_core_dims=[['y', 'x']],
+                                       output_core_dims=[['y', 'x', 'bit']],
+                                       vectorize=True,
+                                       dask='parallelized',
+                                       dask_gufunc_kwargs={'allow_rechunk': True,
+                                                           'output_sizes': {'bit': 16}
+                                                           }
+                                       )
+
+            land_mask = np.all(Qbits_250[0, :, :, -6:-3] == np.array([0, 0, 1]), axis=2)
+            ds_250 = ds_250.drop_vars('sur_refl_state_250m')
+            ds_250_M = ds_250.where(land_mask == True, np.nan)
+
+            doy = filename_250.split(os.sep)[-1].split('_')[1][1:]
+            date_250 = pd.to_datetime(f'{doy[:4]}-1-1') + pd.to_timedelta(int(doy[4:]), unit='D')
+            ds_250_T = ds_250_M.squeeze().assign_coords({'time': date_250}).expand_dims(dim='time', axis=0).transpose(
+                'time', 'y', 'x').drop('band')
+
+        with riox.open_rasterio(filename_500,
+                                mask_and_scale=True,
+                                chunks='auto',
+                                lock=False,
+                                variable=['sur_refl_b06', 'sur_refl_state_500m']) as ds_500:
+            Qbits_500 = xr.apply_ufunc(_unpackbits, ds_500.sur_refl_state_500m.astype(np.uint16),
+                                       kwargs={'num_bits': 16},
+                                       input_core_dims=[['y', 'x']],
+                                       output_core_dims=[['y', 'x', 'bit']],
+                                       vectorize=True,
+                                       dask='parallelized',
+                                       dask_gufunc_kwargs={'allow_rechunk': True,
+                                                           'output_sizes': {'bit': 16}
+                                                           }
+                                       )
+
+            land_mask_500 = np.all(Qbits_500[0, :, :, -6:-3] == np.array([0, 0, 1]), axis=2)
+            ds_500 = ds_500.drop_vars('sur_refl_state_500m')
+            ds_500_M = ds_500.where(land_mask_500 == True, np.nan)
+
+            ds_500_match = ds_500_M.rio.reproject_match(ds_250).assign_coords({'x': ds_250.x, 'y': ds_250.y})
+
+            doy_500 = filename_500.split(os.sep)[-1].split('_')[1][1:]
+            date_500 = pd.to_datetime(f'{doy_500[:4]}-1-1') + pd.to_timedelta(int(doy_500[4:]), unit='D')
+
+            ds_500_T = ds_500_match.squeeze().assign_coords({'time': date_500}).expand_dims(dim='time',
+                                                                                            axis=0).transpose('time',
+                                                                                                              'y',
+                                                                                                              'x').drop(
+                'band')
+
+            ds_500_C = ds_500_T.chunk(ds_250_T.chunks)
+
+        ds_merged = xr.merge([ds_250_T, ds_500_C])
+        scenes.append(ds_merged)
+
+    # Create a DataSet per tile and rechunk on time dimension
+    ds_scene = xr.merge(scenes)
+    ds_scene = ds_scene.chunk({'time': 1, 'y': 'auto', 'x': 'auto'})
+
+    ndvi = _ndvi(ds_scene.sur_refl_b02, ds_scene.sur_refl_b01)
+    hsv = xr.apply_ufunc(_hsv, ds_scene.sur_refl_b06, ds_scene.sur_refl_b02, ds_scene.sur_refl_b01,
+                         input_core_dims=[['y', 'x'], ['y', 'x'], ['y', 'x']],
+                         output_core_dims=[['y', 'x', 'hsv']],
+                         vectorize=True,
+                         dask='parallelized',
+                         dask_gufunc_kwargs={'allow_rechunk': True,
+                                             'output_sizes': {'hsv': 3}
+                                             }
+                         )
+
+    h = hsv.sel(hsv=0) * 360.
+
+    gvi = xr.apply_ufunc(_gvi, ndvi, h,
+                         input_core_dims=[['y', 'x'], ['y', 'x']],
+                         output_core_dims=[['y', 'x']],
+                         vectorize=True,
+                         dask='parallelized',
+                         dask_gufunc_kwargs={'allow_rechunk': True})
+
+    gvi_rechunked = gvi.chunk({'time': -1})
+
+    gvdm = xr.apply_ufunc(_decades, gvi_rechunked,
+                          input_core_dims=[['time']],
+                          exclude_dims={'time', },
+                          dask='parallelized',
+                          dask_gufunc_kwargs={'allow_rechunk': True},
+                          vectorize=True, )
+    gvdm.name = 'greenness'
+
+    gvdm = gvdm.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt'])
+    gvdm = gvdm.astype(float)
+    gvdm = gvdm.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
+    gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
+    gvdm_nodata = gvdm_nan.rio.set_nodata(-999)
+    gvdm_f = gvdm_nodata.astype(np.int16)
+
+    return gvdm_f
+
 
 def main():
     env = 'local'
@@ -260,149 +384,18 @@ def main():
     with Pool(10, maxtasksperchild=None) as p:
         failed = p.map(download, zip(products_links, [options]*len(products_links)), chunksize=1)
 
-    # for d in products_links:
-    #     p = Process(target=download, args=(d, options))
-    #     p.start()
-    #     p.join()
-
     print('Products downloaded')
 
     failed_cln = list(filter(None, failed))
     print(failed_cln)
 
-    gvi_tile = []
-    total = len(tile_folder_list)
-    t_i = 1
-    for tile_folder in tile_folder_list:
+    d_tiles = [analyzer(tile_folder, local_folder) for tile_folder in tile_folder_list]
 
-        print(f'Processing tile {tile_folder[0][-6:-4]}/{tile_folder[0][-3:-1]} {t_i}/{total}')
-        t_i += 1
+    GVI_tiles = dask.compute(d_tiles)
 
-        filenames_500 = list_hdf_folder(local_folder, tile_folder[1])[-5:]
-        filenames_250 = list_hdf_folder(local_folder, tile_folder[0])[-5:]
+    GVI = xr.combine_by_coords(GVI_tiles)
 
-        if not len(filenames_500) == 5 or not len(filenames_250) == 5:
-            print(
-                f'Not enought scenes on {tile_folder[0]} [{len(filenames_250)}] or {tile_folder[1]}[{len(filenames_500)}]')
-            continue
-
-        filenames = zip(filenames_250, filenames_500)
-
-        scenes = []
-
-        for i in filenames:
-
-            filename_250, filename_500 = i
-
-            with riox.open_rasterio(filename_250,
-                                    mask_and_scale=True,
-                                    chunks='auto',
-                                    lock=False,
-                                    variable=['sur_refl_b01', 'sur_refl_b02', 'sur_refl_state_250m']
-                                    ) as ds_250:
-
-                Qbits_250 = xr.apply_ufunc(_unpackbits, ds_250.sur_refl_state_250m.astype(np.uint16),
-                                           kwargs={'num_bits': 16},
-                                           input_core_dims=[['y', 'x']],
-                                           output_core_dims=[['y', 'x', 'bit']],
-                                           vectorize=True,
-                                           dask='parallelized',
-                                           dask_gufunc_kwargs={'allow_rechunk': True,
-                                                               'output_sizes': {'bit': 16}
-                                                               }
-                                           )
-                
-                land_mask = np.all(Qbits_250[0, :, :, -6:-3] == np.array([0, 0, 1]), axis=2)
-                ds_250 = ds_250.drop_vars('sur_refl_state_250m')
-                ds_250_M = ds_250.where(land_mask == True, np.nan)
-
-                doy = filename_250.split(os.sep)[-1].split('_')[1][1:]
-                date_250 = pd.to_datetime(f'{doy[:4]}-1-1') + pd.to_timedelta(int(doy[4:]), unit='D')
-                ds_250_T = ds_250_M.squeeze().assign_coords({'time': date_250}).expand_dims(dim='time', axis=0).transpose(
-                    'time', 'y', 'x').drop('band')
-                
-            with riox.open_rasterio(filename_500,
-                                    mask_and_scale=True,
-                                    chunks='auto',
-                                    lock=False,
-                                    variable=['sur_refl_b06', 'sur_refl_state_500m']) as ds_500:
-
-                Qbits_500 = xr.apply_ufunc(_unpackbits, ds_500.sur_refl_state_500m.astype(np.uint16),
-                                           kwargs={'num_bits': 16},
-                                           input_core_dims=[['y', 'x']],
-                                           output_core_dims=[['y', 'x', 'bit']],
-                                           vectorize=True,
-                                           dask='parallelized',
-                                           dask_gufunc_kwargs={'allow_rechunk': True,
-                                                               'output_sizes': {'bit': 16}
-                                                               }
-                                           )
-
-                land_mask_500 = np.all(Qbits_500[0, :, :, -6:-3] == np.array([0, 0, 1]), axis=2)
-                ds_500 = ds_500.drop_vars('sur_refl_state_500m')
-                ds_500_M = ds_500.where(land_mask_500 == True, np.nan)
-
-                ds_500_match = ds_500_M.rio.reproject_match(ds_250).assign_coords({'x': ds_250.x, 'y': ds_250.y})
-
-                doy_500 = filename_500.split(os.sep)[-1].split('_')[1][1:]
-                date_500 = pd.to_datetime(f'{doy_500[:4]}-1-1') + pd.to_timedelta(int(doy_500[4:]), unit='D')
-
-                ds_500_T = ds_500_match.squeeze().assign_coords({'time': date_500}).expand_dims(dim='time',
-                                                                                                axis=0).transpose('time',
-                                                                                                                  'y',
-                                                                                                                  'x').drop(
-                    'band')
-
-                ds_500_C = ds_500_T.chunk(ds_250_T.chunks)
-
-            ds_merged = xr.merge([ds_250_T, ds_500_C])
-            scenes.append(ds_merged)
-
-        # Create a DataSet per tile and rechunk on time dimension
-        ds_scene = xr.merge(scenes)
-        ds_scene = ds_scene.chunk({'time': 1, 'y': 'auto', 'x': 'auto'})
-
-        ndvi = _ndvi(ds_scene.sur_refl_b02, ds_scene.sur_refl_b01)
-        hsv = xr.apply_ufunc(_hsv, ds_scene.sur_refl_b06, ds_scene.sur_refl_b02, ds_scene.sur_refl_b01,
-                             input_core_dims=[['y', 'x'], ['y', 'x'], ['y', 'x']],
-                             output_core_dims=[['y', 'x', 'hsv']],
-                             vectorize=True,
-                             dask='parallelized',
-                             dask_gufunc_kwargs={'allow_rechunk': True,
-                                                 'output_sizes': {'hsv': 3}
-                                                 }
-                             )
-
-        h = hsv.sel(hsv=0) * 360.
-
-        gvi = xr.apply_ufunc(_gvi, ndvi, h,
-                             input_core_dims=[['y', 'x'], ['y', 'x']],
-                             output_core_dims=[['y', 'x']],
-                             vectorize=True,
-                             dask='parallelized',
-                             dask_gufunc_kwargs={'allow_rechunk': True})
-
-        gvi_rechunked = gvi.chunk({'time': -1})
-
-        gvdm = xr.apply_ufunc(_decades, gvi_rechunked,
-                              input_core_dims=[['time']],
-                              exclude_dims={'time', },
-                              dask='parallelized',
-                              dask_gufunc_kwargs={'allow_rechunk': True},
-                              vectorize=True, )
-        gvdm.name = 'greenness'
-
-        gvdm = gvdm.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt'])
-        gvdm = gvdm.astype(float)
-        gvdm = gvdm.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
-        gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
-        gvdm_nodata = gvdm_nan.rio.set_nodata(-999)
-        gvdm_f = gvdm_nodata.astype(np.int16)
-
-        gvi_tile.append(gvdm_f)
-
-    print(gvi_tile)
-
+    print(GVI)
 
 if __name__ == '__main__':
     main()
