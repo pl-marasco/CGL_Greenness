@@ -8,13 +8,87 @@ import os
 import pycurl
 import certifi
 from distributed import LocalCluster, Client
-
-import functions as fc
+from distributed.utils import tmpfile
+import glob
 
 from multiprocessing import Pool
-from pydap.cas.urs import setup_session
+# from pydap.cas.urs import setup_session
 from bs4 import BeautifulSoup
 from io import BytesIO
+import glob
+import os
+
+import numpy as np
+from skimage.color import rgb2hsv
+
+def _ndvi(nir, red):
+    da = (nir-red)/(nir+red)
+    da.name = 'NDVI'
+    return da
+
+
+def _hsv(R, G, B):
+    rgb = np.dstack((R*255, G*255, B*255))
+    hsv = rgb2hsv(rgb)
+    hsv_nan = np.where(hsv != 0, hsv, np.nan)
+    return hsv_nan
+
+
+def _gvi(ndvi, h):
+    null_mask = np.logical_or(np.isnan(ndvi), np.isnan(h))
+
+    vegetated = np.where((h >= (-2354.83 * ndvi) + 522.68), 1, 0)
+    semiveg = np.where(
+        (h > (-2139.54 * ndvi) + 377.63) & (h < (57.22 * ndvi) + 141.42) & (h < (-2354.83 * ndvi) + 522.68) & (
+                    h > (-261.64 * ndvi) + 133.30), 1, 0)
+
+    # slope = _slope(HSV_d)
+    # semi_vegetated = HSV_d.where(semiveg) #.where(slope > 11.9)
+
+    #     gvi = np.logical_or(~np.isnan(vegetated), ~np.isnan(semiveg))
+    gvi = np.logical_or(vegetated, semiveg)
+
+    gvi_masked = np.where(~null_mask, gvi, np.NaN)
+
+    return gvi_masked
+
+
+def _decades(data):
+    if data[-1] == 1:
+        diff = np.diff(data)
+        # return np.split(data, np.where(np.diff(data) != 0)[0]+1)[-1].size
+        return np.split(data, np.where(np.logical_and(~np.isnan(diff), diff != 0))[0]+1)[-1].size
+    else:
+        return -999
+
+
+def _unpackbits(x, num_bits):
+    xshape = list(x.shape)
+    x = x.reshape([-1, 1])
+    mask = 2**np.arange(num_bits, dtype=x.dtype).reshape([1, num_bits])
+    return np.fliplr((x & mask).astype(bool).astype(int)).reshape(xshape + [num_bits])
+
+
+# def list_blobs_in_folder(container_name, folder_name):
+#     """
+#     List all blobs in a virtual folder in an Azure blob container
+#     """
+#
+#     files = []
+#     generator = modis_container_client.list_blobs(name_starts_with=folder_name)
+#     for blob in generator:
+#         files.append(blob.name)
+#     return files
+
+
+def list_hdf_folder(root_name, folders_path):
+    """"
+    List .hdf files in a folder
+    """
+
+    query_str = os.path.join(root_name, folders_path, '*.hdf')
+    files = glob.glob(query_str)
+    return files
 
 
 def explorer(url):
@@ -39,9 +113,9 @@ def lifter(url, filename):
         c.setopt(c.CAINFO, certifi.where())
         c.setopt(c.FOLLOWLOCATION, True)
         c.setopt(pycurl.SSL_VERIFYHOST, 2)
-        c.setopt(c.NETRC_FILE, r'C:\Users\Pier\_netrc')
+        c.setopt(c.NETRC_FILE, r'/home/maraspi/.netrc')
         c.setopt(c.NETRC, 1)
-        c.setopt(c.COOKIEJAR, r'C:\Users\Pier\_cookie_jar')
+        c.setopt(c.COOKIEJAR, r'/home/maraspi/.cookie_jar')
         c.setopt(c.URL, url)
         with open(filename, 'wb') as f:
             c.setopt(c.WRITEDATA, f)
@@ -78,7 +152,7 @@ def file_path_creator(archive_folder, url):
 
 
 def download(links):
-        archive_folder = r'E:\tmp'
+        archive_folder = r'/BGFS/COMMON/maraspi/Modis'
 
         url_250, url_500 = links
 
@@ -99,12 +173,25 @@ def download(links):
 
 
 def main():
+    from dask_jobqueue import PBSCluster
 
-    cluster = LocalCluster()
+    cluster = PBSCluster(cores=32,
+                         memory="240GB",
+                         project='DASK_Parabellum',
+                         queue='high',
+                         local_directory='/local0/maraspi/',
+                         walltime='12:00:00',
+                         death_timeout=240,
+                         log_directory='/tmp/marapi/workers/')
+
+    cluster.scale(2)
     client = Client(cluster)
+    # client.wait_for_workers(1)
+    # cluster = LocalCluster()
+    # client = Client(cluster)
     print(client)
 
-    local_folder = r'e:\tmp'
+    local_folder = r'/BGFS/COMMON/maraspi/Modis'
 
     product_500 = 'MOD09A1'
     product_250 = 'MOD09Q1'
@@ -126,11 +213,13 @@ def main():
         tile_list.append(pair)
 
     tile_list = sum(tile_list, [])
+    print('Tile list completed')
 
     mod250_url = 'https://e4ftl01.cr.usgs.gov/MOLT/MOD09Q1.061/'
     mod500_url = 'https://e4ftl01.cr.usgs.gov/MOLT/MOD09A1.061/'
 
     soup = explorer(mod250_url)
+    print('Modis date list retreated')
 
     products_links = []
     for link in soup.find_all('a')[-5:]:
@@ -154,8 +243,12 @@ def main():
             if len(tile_250) == len(tile_500) and tile_250:
                 products_links.append([mod250_url+link.get('href')+tile_250, mod500_url+link.get('href')+tile_500])
 
+    print('Product link created')
+
     with Pool(10) as p:
         failed = p.map(download, products_links)
+
+    print('Products downloaded')
 
     failed_cln = list(filter(None, failed))
     print(failed_cln)
@@ -168,8 +261,8 @@ def main():
         print(f'Processing tile {tile_folder[0][-6:-4]}/{tile_folder[0][-3:-1]} {t_i}/{total}')
         t_i += 1
 
-        filenames_500 = fc.list_hdf_folder(local_folder, tile_folder[1])[-5:]
-        filenames_250 = fc.list_hdf_folder(local_folder, tile_folder[0])[-5:]
+        filenames_500 = list_hdf_folder(local_folder, tile_folder[1])[-5:]
+        filenames_250 = list_hdf_folder(local_folder, tile_folder[0])[-5:]
 
         if not len(filenames_500) == 5 or not len(filenames_250) == 5:
             print(
@@ -191,7 +284,7 @@ def main():
                                     variable=['sur_refl_b01', 'sur_refl_b02', 'sur_refl_state_250m']
                                     ) as ds_250:
 
-                Qbits_250 = xr.apply_ufunc(fc._unpackbits, ds_250.sur_refl_state_250m.astype(np.uint16),
+                Qbits_250 = xr.apply_ufunc(_unpackbits, ds_250.sur_refl_state_250m.astype(np.uint16),
                                            kwargs={'num_bits': 16},
                                            input_core_dims=[['y', 'x']],
                                            output_core_dims=[['y', 'x', 'bit']],
@@ -217,7 +310,7 @@ def main():
                                     lock=False,
                                     variable=['sur_refl_b06', 'sur_refl_state_500m']) as ds_500:
 
-                Qbits_500 = xr.apply_ufunc(fc._unpackbits, ds_500.sur_refl_state_500m.astype(np.uint16),
+                Qbits_500 = xr.apply_ufunc(_unpackbits, ds_500.sur_refl_state_500m.astype(np.uint16),
                                            kwargs={'num_bits': 16},
                                            input_core_dims=[['y', 'x']],
                                            output_core_dims=[['y', 'x', 'bit']],
@@ -252,8 +345,8 @@ def main():
         ds_scene = xr.merge(scenes)
         ds_scene = ds_scene.chunk({'time': 1, 'y': 'auto', 'x': 'auto'})
 
-        ndvi = fc._ndvi(ds_scene.sur_refl_b02, ds_scene.sur_refl_b01)
-        hsv = xr.apply_ufunc(fc._hsv, ds_scene.sur_refl_b06, ds_scene.sur_refl_b02, ds_scene.sur_refl_b01,
+        ndvi = _ndvi(ds_scene.sur_refl_b02, ds_scene.sur_refl_b01)
+        hsv = xr.apply_ufunc(_hsv, ds_scene.sur_refl_b06, ds_scene.sur_refl_b02, ds_scene.sur_refl_b01,
                              input_core_dims=[['y', 'x'], ['y', 'x'], ['y', 'x']],
                              output_core_dims=[['y', 'x', 'hsv']],
                              vectorize=True,
@@ -265,7 +358,7 @@ def main():
 
         h = hsv.sel(hsv=0) * 360.
 
-        gvi = xr.apply_ufunc(fc._gvi, ndvi, h,
+        gvi = xr.apply_ufunc(_gvi, ndvi, h,
                              input_core_dims=[['y', 'x'], ['y', 'x']],
                              output_core_dims=[['y', 'x']],
                              vectorize=True,
@@ -274,7 +367,7 @@ def main():
 
         gvi_rechunked = gvi.chunk({'time': -1})
 
-        gvdm = xr.apply_ufunc(fc._decades, gvi_rechunked,
+        gvdm = xr.apply_ufunc(_decades, gvi_rechunked,
                               input_core_dims=[['time']],
                               exclude_dims={'time', },
                               dask='parallelized',
