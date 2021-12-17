@@ -3,23 +3,22 @@ import rioxarray as riox
 import pandas as pd
 import numpy as np
 import re
-import tempfile
 import os
 import pycurl
 import certifi
-from distributed import LocalCluster, Client
-from distributed.utils import tmpfile
-import glob
-
-from multiprocessing import Pool
-# from pydap.cas.urs import setup_session
-from bs4 import BeautifulSoup
-from io import BytesIO
 import glob
 import os
 
-import numpy as np
+
+from distributed import LocalCluster, Client
+from distributed.utils import tmpfile
+from multiprocessing import Pool, Process
+# from pydap.cas.urs import setup_session
+from dask_jobqueue import PBSCluster
 from skimage.color import rgb2hsv
+from bs4 import BeautifulSoup
+from io import BytesIO
+
 
 def _ndvi(nir, red):
     da = (nir-red)/(nir+red)
@@ -104,7 +103,7 @@ def explorer(url):
     return BeautifulSoup(body.decode('iso-8859-1'), 'html.parser')
 
 
-def lifter(url, filename):
+def lifter(url, filename, netrc_path=r'/home/maraspi/.netrc', cookie_path=r'/home/maraspi/.cookie_jar' ):
     if not os.path.isfile(filename):
         # buffer = BytesIO()
         c = pycurl.Curl()
@@ -113,9 +112,9 @@ def lifter(url, filename):
         c.setopt(c.CAINFO, certifi.where())
         c.setopt(c.FOLLOWLOCATION, True)
         c.setopt(pycurl.SSL_VERIFYHOST, 2)
-        c.setopt(c.NETRC_FILE, r'/home/maraspi/.netrc')
+        c.setopt(c.NETRC_FILE, netrc_path)
         c.setopt(c.NETRC, 1)
-        c.setopt(c.COOKIEJAR, r'/home/maraspi/.cookie_jar')
+        c.setopt(c.COOKIEJAR, cookie_path)
         c.setopt(c.URL, url)
         with open(filename, 'wb') as f:
             c.setopt(c.WRITEDATA, f)
@@ -151,21 +150,22 @@ def file_path_creator(archive_folder, url):
     return file_path
 
 
-def download(links):
-        archive_folder = r'/BGFS/COMMON/maraspi/Modis'
+def download(pack):
 
-        url_250, url_500 = links
+        archive_folder, netrc_path, cookie_path = pack[1]
+
+        url_250, url_500 = pack[0]
 
         file_path_250 = file_path_creator(archive_folder, url_250)
         file_path_500 = file_path_creator(archive_folder, url_500)
 
         failed = []
 
-        fail = lifter(url_500, file_path_500)
+        fail = lifter(url_500, file_path_500, netrc_path, cookie_path)
         if fail:
             failed.append(fail)
 
-        fail = lifter(url_250, file_path_250)
+        fail = lifter(url_250, file_path_250, netrc_path, cookie_path)
         if fail:
             failed.append(fail)
 
@@ -173,25 +173,37 @@ def download(links):
 
 
 def main():
-    from dask_jobqueue import PBSCluster
+    env = 'local'
 
-    cluster = PBSCluster(cores=32,
-                         memory="240GB",
-                         project='DASK_Parabellum',
-                         queue='high',
-                         local_directory='/local0/maraspi/',
-                         walltime='12:00:00',
-                         death_timeout=240,
-                         log_directory='/tmp/marapi/workers/')
+    if env == 'local':
+        local_folder = r'E:\tmp'
+        netrc_path = r'C:\Users\Pier\.netrc'
+        cookie_path = r'C:\Users\Pier\.cookie_jar'
 
-    cluster.scale(2)
-    client = Client(cluster)
-    # client.wait_for_workers(1)
-    # cluster = LocalCluster()
-    # client = Client(cluster)
+        options = [local_folder, netrc_path, cookie_path]
+
+        cluster = LocalCluster()
+        client = Client(cluster)
+
+    else:
+        options = {'local_folder': r'/BGFS/COMMON/maraspi/Modis',
+                   'netrc_path': r'/home/maraspi/.netrc',
+                   'cookie_path': r'/home/maraspi/.cookie_jar'}
+
+        cluster = PBSCluster(cores=32,
+                             memory="240GB",
+                             project='DASK_Parabellum',
+                             queue='high',
+                             local_directory='/local0/maraspi/',
+                             walltime='12:00:00',
+                             death_timeout=240,
+                             log_directory='/tmp/marapi/workers/')
+
+        cluster.scale(2)
+        client = Client(cluster)
+        # client.wait_for_workers(1)
+
     print(client)
-
-    local_folder = r'/BGFS/COMMON/maraspi/Modis'
 
     product_500 = 'MOD09A1'
     product_250 = 'MOD09Q1'
@@ -245,8 +257,13 @@ def main():
 
     print('Product link created')
 
-    with Pool(10) as p:
-        failed = p.map(download, products_links)
+    with Pool(10, maxtasksperchild=None) as p:
+        failed = p.map(download, zip(products_links, [options]*len(products_links)), chunksize=1)
+
+    # for d in products_links:
+    #     p = Process(target=download, args=(d, options))
+    #     p.start()
+    #     p.join()
 
     print('Products downloaded')
 
