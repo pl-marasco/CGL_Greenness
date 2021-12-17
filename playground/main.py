@@ -297,7 +297,7 @@ def analyzer(tile_folder, local_folder):
 
 
 def main():
-    env = 'local'
+    env = 'hpc'
 
     if env == 'local':
         local_folder = r'E:\tmp'
@@ -310,9 +310,12 @@ def main():
         client = Client(cluster)
 
     else:
-        options = {'local_folder': r'/BGFS/COMMON/maraspi/Modis',
-                   'netrc_path': r'/home/maraspi/.netrc',
-                   'cookie_path': r'/home/maraspi/.cookie_jar'}
+
+        local_folder = r'/BGFS/COMMON/maraspi/Modis'
+        netrc_path = r'/home/maraspi/.netrc'
+        cookie_path = r'/home/maraspi/.cookie_jar'
+
+        options = [local_folder, netrc_path, cookie_path]
 
         cluster = PBSCluster(cores=32,
                              memory="240GB",
@@ -325,7 +328,7 @@ def main():
 
         cluster.scale(2)
         client = Client(cluster)
-        # client.wait_for_workers(1)
+        client.wait_for_workers(1)
 
     print(client)
 
