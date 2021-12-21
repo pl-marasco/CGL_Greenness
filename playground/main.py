@@ -1,5 +1,5 @@
 import xarray as xr
-import rioxarray as riox
+import rioxarray
 import pandas as pd
 import numpy as np
 import re
@@ -10,7 +10,7 @@ import glob
 import os
 import dask
 
-
+from rioxarray import merge
 from distributed import LocalCluster, Client
 from distributed.utils import tmpfile
 from multiprocessing import Pool, Process
@@ -172,8 +172,9 @@ def download(pack):
 
         return failed
 
+
 @dask.delayed
-def analyzer(tile_folder, local_folder):
+def greenness_detection(tile_folder, local_folder):
 
     filenames_500 = list_hdf_folder(local_folder, tile_folder[1])[-5:]
     filenames_250 = list_hdf_folder(local_folder, tile_folder[0])[-5:]
@@ -190,12 +191,13 @@ def analyzer(tile_folder, local_folder):
     for i in filenames:
         filename_250, filename_500 = i
 
-        with riox.open_rasterio(filename_250,
+        with rioxarray.open_rasterio(filename_250,
                                 mask_and_scale=True,
                                 chunks='auto',
                                 lock=False,
                                 variable=['sur_refl_b01', 'sur_refl_b02', 'sur_refl_state_250m']
                                 ) as ds_250:
+
             Qbits_250 = xr.apply_ufunc(_unpackbits, ds_250.sur_refl_state_250m.astype(np.uint16),
                                        kwargs={'num_bits': 16},
                                        input_core_dims=[['y', 'x']],
@@ -203,8 +205,7 @@ def analyzer(tile_folder, local_folder):
                                        vectorize=True,
                                        dask='parallelized',
                                        dask_gufunc_kwargs={'allow_rechunk': True,
-                                                           'output_sizes': {'bit': 16}
-                                                           }
+                                                           'output_sizes': {'bit': 16}}
                                        )
 
             land_mask = np.all(Qbits_250[0, :, :, -6:-3] == np.array([0, 0, 1]), axis=2)
@@ -216,11 +217,12 @@ def analyzer(tile_folder, local_folder):
             ds_250_T = ds_250_M.squeeze().assign_coords({'time': date_250}).expand_dims(dim='time', axis=0).transpose(
                 'time', 'y', 'x').drop('band')
 
-        with riox.open_rasterio(filename_500,
+        with rioxarray.open_rasterio(filename_500,
                                 mask_and_scale=True,
                                 chunks='auto',
                                 lock=False,
                                 variable=['sur_refl_b06', 'sur_refl_state_500m']) as ds_500:
+
             Qbits_500 = xr.apply_ufunc(_unpackbits, ds_500.sur_refl_state_500m.astype(np.uint16),
                                        kwargs={'num_bits': 16},
                                        input_core_dims=[['y', 'x']],
@@ -228,8 +230,7 @@ def analyzer(tile_folder, local_folder):
                                        vectorize=True,
                                        dask='parallelized',
                                        dask_gufunc_kwargs={'allow_rechunk': True,
-                                                           'output_sizes': {'bit': 16}
-                                                           }
+                                                           'output_sizes': {'bit': 16}}
                                        )
 
             land_mask_500 = np.all(Qbits_500[0, :, :, -6:-3] == np.array([0, 0, 1]), axis=2)
@@ -263,8 +264,7 @@ def analyzer(tile_folder, local_folder):
                          vectorize=True,
                          dask='parallelized',
                          dask_gufunc_kwargs={'allow_rechunk': True,
-                                             'output_sizes': {'hsv': 3}
-                                             }
+                                             'output_sizes': {'hsv': 3}}
                          )
 
     h = hsv.sel(hsv=0) * 360.
@@ -274,7 +274,8 @@ def analyzer(tile_folder, local_folder):
                          output_core_dims=[['y', 'x']],
                          vectorize=True,
                          dask='parallelized',
-                         dask_gufunc_kwargs={'allow_rechunk': True})
+                         dask_gufunc_kwargs={'allow_rechunk': True}
+                         )
 
     gvi_rechunked = gvi.chunk({'time': -1})
 
@@ -286,8 +287,8 @@ def analyzer(tile_folder, local_folder):
                           vectorize=True, )
     gvdm.name = 'greenness'
 
-    gvdm = gvdm.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt'])
-    gvdm = gvdm.astype(float)
+    gvdm = gvdm.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt']).astype(float)
+
     gvdm = gvdm.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
     gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
     gvdm_nodata = gvdm_nan.rio.set_nodata(-999)
@@ -318,17 +319,18 @@ def main():
         options = [local_folder, netrc_path, cookie_path]
 
         cluster = PBSCluster(cores=32,
-                             memory="240GB",
+                             processes=8,
+                             # memory="240GB",
                              project='DASK_Parabellum',
                              queue='high',
-                             local_directory='/local0/maraspi/',
+                             # local_directory='/local0/maraspi/',
                              walltime='12:00:00',
-                             death_timeout=240,
+                             # death_timeout=240,
                              log_directory='/tmp/marapi/workers/')
 
-        cluster.scale(2)
+        cluster.scale(32)
         client = Client(cluster)
-        client.wait_for_workers(1)
+        client.wait_for_workers(32)
 
     print(client)
 
@@ -390,15 +392,23 @@ def main():
     print('Products downloaded')
 
     failed_cln = list(filter(None, failed))
-    print(failed_cln)
+    if failed_cln:
+        print(failed_cln)
 
-    d_tiles = [analyzer(tile_folder, local_folder) for tile_folder in tile_folder_list]
+    d_tiles = [greenness_detection(tile_folder, local_folder) for tile_folder in tile_folder_list]
 
+    # print(d_tiles)
     GVI_tiles = dask.compute(d_tiles)
 
-    GVI = xr.combine_by_coords(GVI_tiles)
+    print('Merge')
 
-    print(GVI)
+    GVI = rioxarray.merge.merge_datasets(GVI_tiles[0])
+
+    #GVI = rioxarray.merge.merge_arrays(d_tiles)
+
+    print('out')
+    GVI.rio.to_raster('./test.tif', **{'compress': 'lzw'}).compute()
+
 
 if __name__ == '__main__':
     main()
