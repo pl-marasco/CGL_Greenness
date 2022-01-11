@@ -11,7 +11,7 @@ import os
 import dask
 
 from rioxarray import merge
-from distributed import LocalCluster, Client
+from distributed import LocalCluster, Client, wait
 from distributed.utils import tmpfile
 from multiprocessing import Pool, Process
 # from pydap.cas.urs import setup_session
@@ -298,7 +298,7 @@ def greenness_detection(tile_folder, local_folder):
 
 
 def main():
-    env = 'hpc'
+    env = 'local'
 
     if env == 'local':
         local_folder = r'E:\tmp'
@@ -307,7 +307,7 @@ def main():
 
         options = [local_folder, netrc_path, cookie_path]
 
-        cluster = LocalCluster()
+        cluster = LocalCluster(n_workers=2)
         client = Client(cluster)
 
     else:
@@ -337,8 +337,11 @@ def main():
     product_500 = 'MOD09A1'
     product_250 = 'MOD09Q1'
 
-    v_range = range(5, 10)
-    h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
+    # v_range = range(5, 10)
+    # h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
+
+    v_range = range(5, 7)
+    h_range = [range(17, 18), range(16, 17)]
 
     tile_list = []
     tile_folder_list = []
@@ -402,12 +405,12 @@ def main():
 
     print('Merge')
 
-    GVI = rioxarray.merge.merge_datasets(GVI_tiles[0])
+    GVI = rioxarray.merge.merge_arrays(GVI_tiles[0])
 
     #GVI = rioxarray.merge.merge_arrays(d_tiles)
 
     print('out')
-    GVI.rio.to_raster('./test.tif', **{'compress': 'lzw'}).compute()
+    GVI.rio.to_raster('./test.tif', **{'compress': 'lzw'})
 
 
 if __name__ == '__main__':
