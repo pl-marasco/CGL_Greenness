@@ -22,13 +22,13 @@ from io import BytesIO
 
 
 def _ndvi(nir, red):
-    da = (nir-red)/(nir+red)
+    da = (nir - red) / (nir + red)
     da.name = 'NDVI'
     return da
 
 
 def _hsv(R, G, B):
-    rgb = np.dstack((R*255, G*255, B*255))
+    rgb = np.dstack((R * 255, G * 255, B * 255))
     hsv = rgb2hsv(rgb)
     hsv_nan = np.where(hsv != 0, hsv, np.nan)
     return hsv_nan
@@ -40,7 +40,7 @@ def _gvi(ndvi, h):
     vegetated = np.where((h >= (-2354.83 * ndvi) + 522.68), 1, 0)
     semiveg = np.where(
         (h > (-2139.54 * ndvi) + 377.63) & (h < (57.22 * ndvi) + 141.42) & (h < (-2354.83 * ndvi) + 522.68) & (
-                    h > (-261.64 * ndvi) + 133.30), 1, 0)
+                h > (-261.64 * ndvi) + 133.30), 1, 0)
 
     # slope = _slope(HSV_d)
     # semi_vegetated = HSV_d.where(semiveg) #.where(slope > 11.9)
@@ -57,7 +57,7 @@ def _decades(data):
     if data[-1] == 1:
         diff = np.diff(data)
         # return np.split(data, np.where(np.diff(data) != 0)[0]+1)[-1].size
-        return np.split(data, np.where(np.logical_and(~np.isnan(diff), diff != 0))[0]+1)[-1].size
+        return np.split(data, np.where(np.logical_and(~np.isnan(diff), diff != 0))[0] + 1)[-1].size
     else:
         return -999
 
@@ -65,7 +65,7 @@ def _decades(data):
 def _unpackbits(x, num_bits):
     xshape = list(x.shape)
     x = x.reshape([-1, 1])
-    mask = 2**np.arange(num_bits, dtype=x.dtype).reshape([1, num_bits])
+    mask = 2 ** np.arange(num_bits, dtype=x.dtype).reshape([1, num_bits])
     return np.fliplr((x & mask).astype(bool).astype(int)).reshape(xshape + [num_bits])
 
 
@@ -104,7 +104,7 @@ def explorer(url):
     return BeautifulSoup(body.decode('iso-8859-1'), 'html.parser')
 
 
-def lifter(url, filename, netrc_path=r'/home/maraspi/.netrc', cookie_path=r'/home/maraspi/.cookie_jar' ):
+def lifter(url, filename, netrc_path=r'/home/maraspi/.netrc', cookie_path=r'/home/maraspi/.cookie_jar'):
     if not os.path.isfile(filename):
         # buffer = BytesIO()
         c = pycurl.Curl()
@@ -151,37 +151,44 @@ def file_path_creator(archive_folder, url):
     return file_path
 
 
+def v_h_extractor(path):
+    components = path[0].split(os.sep)
+    v = components[-1]
+    h = components[-2]
+    return h, v
+
+
 def download(pack):
+    archive_folder, netrc_path, cookie_path = pack[1]
 
-        archive_folder, netrc_path, cookie_path = pack[1]
+    url_250, url_500 = pack[0]
 
-        url_250, url_500 = pack[0]
+    file_path_250 = file_path_creator(archive_folder, url_250)
+    file_path_500 = file_path_creator(archive_folder, url_500)
 
-        file_path_250 = file_path_creator(archive_folder, url_250)
-        file_path_500 = file_path_creator(archive_folder, url_500)
+    failed = []
 
-        failed = []
+    fail = lifter(url_500, file_path_500, netrc_path, cookie_path)
+    if fail:
+        failed.append(fail)
 
-        fail = lifter(url_500, file_path_500, netrc_path, cookie_path)
-        if fail:
-            failed.append(fail)
+    fail = lifter(url_250, file_path_250, netrc_path, cookie_path)
+    if fail:
+        failed.append(fail)
 
-        fail = lifter(url_250, file_path_250, netrc_path, cookie_path)
-        if fail:
-            failed.append(fail)
-
-        return failed
+    return failed
 
 
-@dask.delayed
-def greenness_detection(tile_folder, local_folder):
+# @dask.delayed
+def greenness_detection(tile_folders, local_folder):
+    h_num, v_num = v_h_extractor(tile_folders)
 
-    filenames_500 = list_hdf_folder(local_folder, tile_folder[1])[-5:]
-    filenames_250 = list_hdf_folder(local_folder, tile_folder[0])[-5:]
+    filenames_500 = list_hdf_folder(local_folder, tile_folders[1])[-5:]
+    filenames_250 = list_hdf_folder(local_folder, tile_folders[0])[-5:]
 
     if not len(filenames_500) == 5 or not len(filenames_250) == 5:
         print(
-            f'Not enought scenes on {tile_folder[0]} [{len(filenames_250)}] or {tile_folder[1]}[{len(filenames_500)}]')
+            f'Not enought scenes on {tile_folders[0]} [{len(filenames_250)}] or {tile_folders[1]}[{len(filenames_500)}]')
         return
 
     filenames = zip(filenames_250, filenames_500)
@@ -192,12 +199,11 @@ def greenness_detection(tile_folder, local_folder):
         filename_250, filename_500 = i
 
         with rioxarray.open_rasterio(filename_250,
-                                mask_and_scale=True,
-                                chunks='auto',
-                                lock=False,
-                                variable=['sur_refl_b01', 'sur_refl_b02', 'sur_refl_state_250m']
-                                ) as ds_250:
-
+                                     mask_and_scale=True,
+                                     chunks='auto',
+                                     lock=False,
+                                     variable=['sur_refl_b01', 'sur_refl_b02', 'sur_refl_state_250m']
+                                     ) as ds_250:
             Qbits_250 = xr.apply_ufunc(_unpackbits, ds_250.sur_refl_state_250m.astype(np.uint16),
                                        kwargs={'num_bits': 16},
                                        input_core_dims=[['y', 'x']],
@@ -218,11 +224,10 @@ def greenness_detection(tile_folder, local_folder):
                 'time', 'y', 'x').drop('band')
 
         with rioxarray.open_rasterio(filename_500,
-                                mask_and_scale=True,
-                                chunks='auto',
-                                lock=False,
-                                variable=['sur_refl_b06', 'sur_refl_state_500m']) as ds_500:
-
+                                     mask_and_scale=True,
+                                     chunks='auto',
+                                     lock=False,
+                                     variable=['sur_refl_b06', 'sur_refl_state_500m']) as ds_500:
             Qbits_500 = xr.apply_ufunc(_unpackbits, ds_500.sur_refl_state_500m.astype(np.uint16),
                                        kwargs={'num_bits': 16},
                                        input_core_dims=[['y', 'x']],
@@ -269,6 +274,22 @@ def greenness_detection(tile_folder, local_folder):
 
     h = hsv.sel(hsv=0) * 360.
 
+    # region NDVI
+    ndvi_ = ndvi.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt']).astype(float)
+    ndvi_out = ndvi_.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
+    tile_name = f'ndvi_{h_num}_{v_num}.nc'
+    ndvi_out_path = os.path.join(local_folder, tile_name)
+    ndvi_out.to_netcdf(ndvi_out_path)
+    # endregion
+
+    # region H
+    h_ = h.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt']).astype(float)
+    h_out = h_.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
+    h_tile_name = f'h_{h_num}_{v_num}.nc'
+    h_out_path = os.path.join(local_folder, h_tile_name)
+    h_out.to_netcdf(h_out_path)
+    # endregion
+
     gvi = xr.apply_ufunc(_gvi, ndvi, h,
                          input_core_dims=[['y', 'x'], ['y', 'x']],
                          output_core_dims=[['y', 'x']],
@@ -301,15 +322,13 @@ def main():
     env = 'local'
 
     if env == 'local':
-        local_folder = r'E:\tmp'
+        local_folder = r'C:\temp'
         netrc_path = r'C:\Users\Pier\.netrc'
         cookie_path = r'C:\Users\Pier\.cookie_jar'
 
         options = [local_folder, netrc_path, cookie_path]
 
-        cluster = LocalCluster(n_workers=2)
-        client = Client(cluster)
-
+        workers = 2
     else:
 
         local_folder = r'/BGFS/COMMON/maraspi/Modis'
@@ -328,11 +347,7 @@ def main():
                              # death_timeout=240,
                              log_directory='/tmp/marapi/workers/')
 
-        cluster.scale(32)
-        client = Client(cluster)
-        client.wait_for_workers(32)
-
-    print(client)
+        workers = 32
 
     product_500 = 'MOD09A1'
     product_250 = 'MOD09Q1'
@@ -346,7 +361,7 @@ def main():
     tile_list = []
     tile_folder_list = []
     for i, v in enumerate(v_range):
-        v = [v]*len(h_range[i])
+        v = [v] * len(h_range[i])
         pair = list(zip(v, h_range[i]))
         for j in pair:
             folder_500 = os.path.join(product_500, str(j[1]).zfill(2), str(j[0]).zfill(2))
@@ -367,14 +382,14 @@ def main():
 
     products_links = []
     for link in soup.find_all('a')[-5:]:
-        soup_tiles_250 = explorer(mod250_url+link.get('href'))
-        soup_tiles_500 = explorer(mod500_url+link.get('href'))
+        soup_tiles_250 = explorer(mod250_url + link.get('href'))
+        soup_tiles_500 = explorer(mod500_url + link.get('href'))
 
         for hv in tile_list:
             v_t = str(hv[0]).zfill(2)
             h_t = str(hv[1]).zfill(2)
 
-            tile_250, tile_500 = ['']*2
+            tile_250, tile_500 = [''] * 2
 
             tile_250_list = soup_tiles_250.find_all(href=re.compile(fr'^.*(h{h_t}v{v_t}).*(hdf$)'))
             if tile_250_list:
@@ -385,18 +400,30 @@ def main():
                 tile_500 = tile_500_list[0].getText()
 
             if len(tile_250) == len(tile_500) and tile_250:
-                products_links.append([mod250_url+link.get('href')+tile_250, mod500_url+link.get('href')+tile_500])
+                products_links.append(
+                    [mod250_url + link.get('href') + tile_250, mod500_url + link.get('href') + tile_500])
 
     print('Product link created')
 
     with Pool(10, maxtasksperchild=None) as p:
-        failed = p.map(download, zip(products_links, [options]*len(products_links)), chunksize=1)
+        failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
 
     print('Products downloaded')
 
     failed_cln = list(filter(None, failed))
     if failed_cln:
         print(failed_cln)
+
+    if env == 'local':
+        cluster = LocalCluster(n_workers=workers)
+        client = Client(cluster)
+        client.wait_for_workers(workers)
+    else:
+        cluster.scale(workers)
+        client = Client(cluster)
+        client.wait_for_workers(workers / 3)
+
+    print(client)
 
     d_tiles = [greenness_detection(tile_folder, local_folder) for tile_folder in tile_folder_list]
 
@@ -407,7 +434,7 @@ def main():
 
     GVI = rioxarray.merge.merge_arrays(GVI_tiles[0])
 
-    #GVI = rioxarray.merge.merge_arrays(d_tiles)
+    # GVI = rioxarray.merge.merge_arrays(d_tiles)
 
     print('out')
     GVI.rio.to_raster('./test.tif', **{'compress': 'lzw'})
