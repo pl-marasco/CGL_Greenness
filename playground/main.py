@@ -116,7 +116,9 @@ def lifter(url, filename, netrc_path=r'/home/maraspi/.netrc', cookie_path=r'/hom
         c.setopt(c.NETRC_FILE, netrc_path)
         c.setopt(c.NETRC, 1)
         c.setopt(c.COOKIEJAR, cookie_path)
+        c.setopt(c.NOSIGNAL, 1)
         c.setopt(c.URL, url)
+
         with open(filename, 'wb') as f:
             c.setopt(c.WRITEDATA, f)
             try:
@@ -179,7 +181,7 @@ def download(pack):
     return failed
 
 
-@dask.delayed
+# @dask.delayed
 def greenness_detection(tile_folders, local_folder):
     h_num, v_num = v_h_extractor(tile_folders)
 
@@ -329,7 +331,7 @@ def greenness_detection(tile_folders, local_folder):
 
 
 def main():
-    env = 'hpc'
+    env = 'local'
 
     if env == 'local':
         local_folder = r'C:\temp'
@@ -362,11 +364,11 @@ def main():
     product_500 = 'MOD09A1'
     product_250 = 'MOD09Q1'
 
-    v_range = range(5, 10)
-    h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
+    # v_range = range(5, 10)
+    # h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
 
-    # v_range = range(5, 7)
-    # h_range = [range(17, 18), range(16, 17)]
+    v_range = range(7, 8)
+    h_range = [range(16, 17), ]
 
     tile_list = []
     tile_folder_list = []
@@ -415,7 +417,7 @@ def main():
 
     print('Product link created')
 
-    with Pool(10, maxtasksperchild=None) as p:
+    with Pool(5, maxtasksperchild=None) as p:
         failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
 
     print('Products downloaded')
