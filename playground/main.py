@@ -179,7 +179,7 @@ def download(pack):
     return failed
 
 
-# @dask.delayed
+@dask.delayed
 def greenness_detection(tile_folders, local_folder):
     h_num, v_num = v_h_extractor(tile_folders)
 
@@ -263,6 +263,8 @@ def greenness_detection(tile_folders, local_folder):
     ds_scene = ds_scene.chunk({'time': 1, 'y': 'auto', 'x': 'auto'})
 
     ndvi = _ndvi(ds_scene.sur_refl_b02, ds_scene.sur_refl_b01)
+    ndvi = ndvi.where(ndvi <= 1.0, 1.0)
+
     hsv = xr.apply_ufunc(_hsv, ds_scene.sur_refl_b06, ds_scene.sur_refl_b02, ds_scene.sur_refl_b01,
                          input_core_dims=[['y', 'x'], ['y', 'x'], ['y', 'x']],
                          output_core_dims=[['y', 'x', 'hsv']],
@@ -273,22 +275,6 @@ def greenness_detection(tile_folders, local_folder):
                          )
 
     h = hsv.sel(hsv=0) * 360.
-
-    # region NDVI
-    ndvi_ = ndvi.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt']).astype(float)
-    ndvi_out = ndvi_.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
-    tile_name = f'ndvi_{h_num}_{v_num}.nc'
-    ndvi_out_path = os.path.join(local_folder, tile_name)
-    ndvi_out.to_netcdf(ndvi_out_path)
-    # endregion
-
-    # region H
-    h_ = h.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt']).astype(float)
-    h_out = h_.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
-    h_tile_name = f'h_{h_num}_{v_num}.nc'
-    h_out_path = os.path.join(local_folder, h_tile_name)
-    h_out.to_netcdf(h_out_path)
-    # endregion
 
     gvi = xr.apply_ufunc(_gvi, ndvi, h,
                          input_core_dims=[['y', 'x'], ['y', 'x']],
@@ -315,11 +301,35 @@ def greenness_detection(tile_folders, local_folder):
     gvdm_nodata = gvdm_nan.rio.set_nodata(-999)
     gvdm_f = gvdm_nodata.astype(np.int16)
 
+    # region NDVI
+    ndvi_ = ndvi.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt']).astype(float)
+    ndvi_out = ndvi_.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
+    tile_name = f'ndvi_{h_num}_{v_num}.nc'
+    ndvi_out_path = os.path.join(local_folder, 'Results', tile_name)
+    ndvi_out.to_netcdf(ndvi_out_path)
+    # endregion
+
+    # region H
+    h_ = h.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt']).astype(float)
+    h_out = h_.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
+    h_tile_name = f'h_{h_num}_{v_num}.nc'
+    h_out_path = os.path.join(local_folder, 'Results', h_tile_name)
+    h_out.to_netcdf(h_out_path)
+    # endregion
+
+    # region GVI
+    gvi_ = gvi.rio.write_crs(ds_merged['spatial_ref'].attrs['crs_wkt']).astype(float)
+    gvi_out = gvi_.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
+    gvi_tile_name = f'gvi_{h_num}_{v_num}.nc'
+    gvi_out_path = os.path.join(local_folder, 'Results', gvi_tile_name)
+    gvi_out.to_netcdf(gvi_out_path)
+    # endregion
+
     return gvdm_f
 
 
 def main():
-    env = 'local'
+    env = 'hpc'
 
     if env == 'local':
         local_folder = r'C:\temp'
@@ -338,7 +348,7 @@ def main():
         options = [local_folder, netrc_path, cookie_path]
 
         cluster = PBSCluster(cores=32,
-                             processes=8,
+                             processes=4,
                              # memory="240GB",
                              project='DASK_Parabellum',
                              queue='high',
@@ -352,11 +362,11 @@ def main():
     product_500 = 'MOD09A1'
     product_250 = 'MOD09Q1'
 
-    # v_range = range(5, 10)
-    # h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
+    v_range = range(5, 10)
+    h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
 
-    v_range = range(5, 7)
-    h_range = [range(17, 18), range(16, 17)]
+    # v_range = range(5, 7)
+    # h_range = [range(17, 18), range(16, 17)]
 
     tile_list = []
     tile_folder_list = []
@@ -421,7 +431,7 @@ def main():
     else:
         cluster.scale(workers)
         client = Client(cluster)
-        client.wait_for_workers(workers / 3)
+        client.wait_for_workers((workers * 4)/64)
 
     print(client)
 
@@ -437,7 +447,7 @@ def main():
     # GVI = rioxarray.merge.merge_arrays(d_tiles)
 
     print('out')
-    GVI.rio.to_raster('./test.tif', **{'compress': 'lzw'})
+    GVI.rio.to_raster('/BGFS/COMMON/maraspi/Modis/out.tif', **{'compress': 'lzw'})
 
 
 if __name__ == '__main__':
