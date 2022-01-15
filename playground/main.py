@@ -9,6 +9,7 @@ import certifi
 import glob
 import os
 import dask
+import platform
 
 from rioxarray import merge
 from distributed import LocalCluster, Client, wait
@@ -352,12 +353,13 @@ def greenness_detection(tile_folders, local_folder):
 
 
 def main():
-    env = 'local'
+    env = platform.system()
 
-    if env == 'local':
-        local_folder = r'C:\temp'
-        netrc_path = r'C:\Users\Pier\.netrc'
-        cookie_path = r'C:\Users\Pier\.cookie_jar'
+    if env == 'Windows':
+        local_folder = r'c:\temp'
+        netrc_path = r'c:\Users\Pier\.netrc'
+        cookie_path = r'c:\Users\Pier\.cookie_jar'
+        out_path = r'c:\temp\Results\out.tif'
 
         options = [local_folder, netrc_path, cookie_path]
 
@@ -367,6 +369,7 @@ def main():
         local_folder = r'/BGFS/COMMON/maraspi/Modis'
         netrc_path = r'/home/maraspi/.netrc'
         cookie_path = r'/home/maraspi/.cookie_jar'
+        out_path = r'/BGFS/COMMON/maraspi/Modis/out.tif'
 
         options = [local_folder, netrc_path, cookie_path]
 
@@ -438,14 +441,8 @@ def main():
 
     print('Product link created')
 
-    # with Pool(5, maxtasksperchild=None) as p:
-    #     failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
-    failed = []
-    for i in zip(products_links, [options] * len(products_links)):
-        result = download(i)
-        if result:
-            failed.append(result)
-
+    with Pool(5, maxtasksperchild=None) as p:
+        failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
 
     print('Products downloaded')
 
@@ -476,8 +473,7 @@ def main():
     # GVI = rioxarray.merge.merge_arrays(d_tiles)
 
     print('out')
-    # GVI.rio.to_raster('/BGFS/COMMON/maraspi/Modis/out.tif', **{'compress': 'lzw'})
-    GVI.rio.to_raster(r'c:\temp\Results\out.tif', **{'compress': 'lzw'})
+    GVI.rio.to_raster(out_path, **{'compress': 'lzw'})
 
 
 if __name__ == '__main__':
