@@ -104,6 +104,26 @@ def explorer(url):
     return BeautifulSoup(body.decode('iso-8859-1'), 'html.parser')
 
 
+def xml_size_extractor(url, netrc_path, cookie_path):
+    buffer = BytesIO()
+    c = pycurl.Curl()
+    c.setopt(c.URL, url)
+    c.setopt(c.WRITEDATA, buffer)
+    c.setopt(c.CAINFO, certifi.where())
+    c.setopt(c.FOLLOWLOCATION, True)
+    c.setopt(pycurl.SSL_VERIFYHOST, 2)
+    c.setopt(c.NETRC_FILE, netrc_path)
+    c.setopt(c.NETRC, 1)
+    c.setopt(c.COOKIEJAR, cookie_path)
+    c.setopt(c.NOSIGNAL, 1)
+    c.perform()
+    c.close()
+
+    body = buffer.getvalue()
+    xml_body = BeautifulSoup(body.decode('UTF-8'), 'lxml')
+    return int(xml_body.find('filesize').text)
+
+
 def lifter(url, filename, netrc_path=r'/home/maraspi/.netrc', cookie_path=r'/home/maraspi/.cookie_jar'):
     if not os.path.isfile(filename):
         # buffer = BytesIO()
@@ -129,7 +149,8 @@ def lifter(url, filename, netrc_path=r'/home/maraspi/.netrc', cookie_path=r'/hom
             # c.perform()
             c.close()
             f.close()
-        if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
+        verbatim_size = xml_size_extractor(url+'.xml',  netrc_path, cookie_path)
+        if not os.path.isfile(filename) or os.path.getsize(filename) != verbatim_size :
             print(f'Error downloading {filename}')
             return url
         return
@@ -364,11 +385,11 @@ def main():
     product_500 = 'MOD09A1'
     product_250 = 'MOD09Q1'
 
-    # v_range = range(5, 10)
-    # h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
+    v_range = range(5, 10)
+    h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
 
-    v_range = range(7, 8)
-    h_range = [range(16, 17), ]
+    # v_range = range(7, 8)
+    # h_range = [range(16, 17), ]
 
     tile_list = []
     tile_folder_list = []
@@ -417,8 +438,14 @@ def main():
 
     print('Product link created')
 
-    with Pool(5, maxtasksperchild=None) as p:
-        failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
+    # with Pool(5, maxtasksperchild=None) as p:
+    #     failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
+    failed = []
+    for i in zip(products_links, [options] * len(products_links)):
+        result = download(i)
+        if result:
+            failed.append(result)
+
 
     print('Products downloaded')
 
@@ -449,7 +476,8 @@ def main():
     # GVI = rioxarray.merge.merge_arrays(d_tiles)
 
     print('out')
-    GVI.rio.to_raster('/BGFS/COMMON/maraspi/Modis/out.tif', **{'compress': 'lzw'})
+    # GVI.rio.to_raster('/BGFS/COMMON/maraspi/Modis/out.tif', **{'compress': 'lzw'})
+    GVI.rio.to_raster(r'c:\temp\Results\out.tif', **{'compress': 'lzw'})
 
 
 if __name__ == '__main__':
