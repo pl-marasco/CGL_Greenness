@@ -16,6 +16,7 @@ from distributed import LocalCluster, Client, wait
 from distributed.utils import tmpfile
 from multiprocessing import Pool, Process
 # from pydap.cas.urs import setup_session
+from tqdm.contrib.concurrent import thread_map
 from dask_jobqueue import PBSCluster
 from skimage.color import rgb2hsv
 from bs4 import BeautifulSoup
@@ -356,14 +357,16 @@ def main():
     env = platform.system()
 
     if env == 'Windows':
-        local_folder = r'c:\temp'
+        # local_folder = r'c:\temp'
+        local_folder = r'e:\tmp'
         netrc_path = r'c:\Users\Pier\.netrc'
         cookie_path = r'c:\Users\Pier\.cookie_jar'
-        out_path = r'c:\temp\Results\out.tif'
+        # out_path = r'c:\temp\Results\out.tif'
+        out_path = r'e:\tmp\results\out.tif'
 
         options = [local_folder, netrc_path, cookie_path]
 
-        workers = 2
+        workers = 4
     else:
 
         local_folder = r'/BGFS/COMMON/maraspi/Modis'
@@ -441,8 +444,10 @@ def main():
 
     print('Product link created')
 
-    with Pool(5, maxtasksperchild=None) as p:
-        failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
+    # with Pool(5, maxtasksperchild=None) as p:
+    #     failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
+
+    failed = thread_map(download, zip(products_links, [options] * len(products_links)), total=len(products_links))
 
     print('Products downloaded')
 
@@ -450,7 +455,7 @@ def main():
     if failed_cln:
         print(failed_cln)
 
-    if env == 'local':
+    if env == 'Windows':
         cluster = LocalCluster(n_workers=workers)
         client = Client(cluster)
         client.wait_for_workers(workers)
