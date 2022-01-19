@@ -23,14 +23,26 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 
 
-def _ndvi(nir, red):
+def _ndvi(red, nir):
     da = (nir - red) / (nir + red)
     da.name = 'NDVI'
     return da
 
 
+def _evi(blue, red, nir):
+    2.5 * ((nir - red) / (nir + 6 * red - 7.5 * blue + 1))
+
+
+def _rescale(in_array, input_low, input_high, out_low=0, out_high=1):
+    return ((in_array - input_low)/(input_high-input_low))*(out_high-out_low)+out_low
+
+
 def _hsv(R, G, B):
-    rgb = np.dstack((R * 255, G * 255, B * 255))
+    r = _rescale(R, -0.01, 1.6, 0, 255)
+    g = _rescale(G, -0.01, 1.6, 0, 255)
+    b = _rescale(B, -0.01, 1.6, 0, 255)
+
+    rgb = np.dstack((r, g, b))
     hsv = rgb2hsv(rgb)
     hsv_nan = np.where(hsv != 0, hsv, np.nan)
     return hsv_nan
@@ -204,7 +216,7 @@ def download(pack):
     return failed
 
 
-# @dask.delayed
+@dask.delayed
 def greenness_detection(tile_folders, local_folder):
     h_num, v_num = v_h_extractor(tile_folders)
 
@@ -252,7 +264,7 @@ def greenness_detection(tile_folders, local_folder):
                                      mask_and_scale=True,
                                      chunks='auto',
                                      lock=False,
-                                     variable=['sur_refl_b06', 'sur_refl_state_500m']) as ds_500:
+                                     variable=['sur_refl_b03', 'sur_refl_b06', 'sur_refl_state_500m']) as ds_500:
             Qbits_500 = xr.apply_ufunc(_unpackbits, ds_500.sur_refl_state_500m.astype(np.uint16),
                                        kwargs={'num_bits': 16},
                                        input_core_dims=[['y', 'x']],
@@ -287,8 +299,10 @@ def greenness_detection(tile_folders, local_folder):
     ds_scene = xr.merge(scenes)
     ds_scene = ds_scene.chunk({'time': 1, 'y': 'auto', 'x': 'auto'})
 
-    ndvi = _ndvi(ds_scene.sur_refl_b02, ds_scene.sur_refl_b01)
+    ndvi = _ndvi(ds_scene.sur_refl_b01, ds_scene.sur_refl_b02)
     ndvi = ndvi.where(ndvi <= 1.0, 1.0)
+
+    #evi = _evi(ds_scene.sur_refl_b03,  ds_scene.sur_refl_b02, ds_scene.sur_refl_b01 )
 
     hsv = xr.apply_ufunc(_hsv, ds_scene.sur_refl_b06, ds_scene.sur_refl_b02, ds_scene.sur_refl_b01,
                          input_core_dims=[['y', 'x'], ['y', 'x'], ['y', 'x']],
