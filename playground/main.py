@@ -1,3 +1,5 @@
+import datetime
+
 import xarray as xr
 import rioxarray
 import pandas as pd
@@ -369,6 +371,7 @@ def greenness_detection(tile_folders, local_folder):
 
 def main():
     env = platform.system()
+    today_date = datetime.date.today().strftime('%Y%m%d')
 
     if env == 'Windows':
         # local_folder = r'c:\temp'
@@ -376,7 +379,7 @@ def main():
         netrc_path = r'c:\Users\Pier\.netrc'
         cookie_path = r'c:\Users\Pier\.cookie_jar'
         # out_path = r'c:\temp\Results\out.tif'
-        out_path = r'e:\tmp\results\out.tif'
+        out_path = fr'e:\tmp\results\MVP_Modis_250_{today_date}.tif'
 
         options = [local_folder, netrc_path, cookie_path]
 
@@ -386,7 +389,7 @@ def main():
         local_folder = r'/BGFS/COMMON/maraspi/Modis'
         netrc_path = r'/home/maraspi/.netrc'
         cookie_path = r'/home/maraspi/.cookie_jar'
-        out_path = r'/BGFS/COMMON/maraspi/Modis/out.tif'
+        out_path = fr'/BGFS/COMMON/maraspi/Modis/Results/MVP_Modis_250_{today_date}.tif'
 
         options = [local_folder, netrc_path, cookie_path]
 
