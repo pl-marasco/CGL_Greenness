@@ -406,7 +406,7 @@ def main():
     product_250 = 'MOD09Q1'
 
     v_range = range(5, 10)
-    h_range = [list(range(17, 24)), list(range(16, 24)), list(range(15, 24)), list(range(21, 24)), list(range(21, 23))]
+    h_range = [list(range(17, 24)), list(range(16, 27)), list(range(15, 27)), list(range(20, 24)), list(range(20, 23))]
 
     # v_range = range(7, 8)
     # h_range = [range(16, 17), ]
