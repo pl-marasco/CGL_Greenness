@@ -212,7 +212,7 @@ def file_withdraw(pack):
                 print(f'Error downloading {url}')
 
             if os.path.getsize(file_path) != verbatim_size:
-                print(f'Size error in {file_path}')
+                print(f'{i}° attempt resulted in a size error over the {file_path}. A new attempt will be conducted')
                 i += 1
             else:
                 break
