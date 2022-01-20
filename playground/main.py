@@ -107,7 +107,7 @@ def list_hdf_folder(root_name, folders_path):
     return files
 
 
-def explorer(url):
+def scraping(url):
     buffer = BytesIO()
     c = pycurl.Curl()
     c.setopt(c.URL, url)
@@ -120,11 +120,18 @@ def explorer(url):
     return BeautifulSoup(body.decode('iso-8859-1'), 'html.parser')
 
 
-def xml_size_extractor(url, netrc_path, cookie_path):
-    buffer = BytesIO()
+def xml_size_extractor(file_path):
+
+    with open(file_path, 'rb') as body:
+        xml_body = BeautifulSoup(body.read().decode('UTF-8'), 'lxml')
+
+    return int(xml_body.find('filesize').text)
+
+
+def download(url, filename, netrc_path=r'/home/maraspi/.netrc', cookie_path=r'/home/maraspi/.cookie_jar'):
+
     c = pycurl.Curl()
-    c.setopt(c.URL, url)
-    c.setopt(c.WRITEDATA, buffer)
+
     c.setopt(c.CAINFO, certifi.where())
     c.setopt(c.FOLLOWLOCATION, True)
     c.setopt(pycurl.SSL_VERIFYHOST, 2)
@@ -132,44 +139,18 @@ def xml_size_extractor(url, netrc_path, cookie_path):
     c.setopt(c.NETRC, 1)
     c.setopt(c.COOKIEJAR, cookie_path)
     c.setopt(c.NOSIGNAL, 1)
-    c.perform()
-    c.close()
+    c.setopt(c.URL, url)
 
-    body = buffer.getvalue()
-    xml_body = BeautifulSoup(body.decode('UTF-8'), 'lxml')
-    return int(xml_body.find('filesize').text)
+    with open(filename, 'wb') as f:
+        c.setopt(c.WRITEDATA, f)
+        try:
+            c.perform()
+        except c.error as error:
+            raise error
 
-
-def lifter(url, filename, netrc_path=r'/home/maraspi/.netrc', cookie_path=r'/home/maraspi/.cookie_jar'):
-    if not os.path.isfile(filename):
-        # buffer = BytesIO()
-        c = pycurl.Curl()
-
-        # c.setopt(c.WRITEDATA, buffer)
-        c.setopt(c.CAINFO, certifi.where())
-        c.setopt(c.FOLLOWLOCATION, True)
-        c.setopt(pycurl.SSL_VERIFYHOST, 2)
-        c.setopt(c.NETRC_FILE, netrc_path)
-        c.setopt(c.NETRC, 1)
-        c.setopt(c.COOKIEJAR, cookie_path)
-        c.setopt(c.NOSIGNAL, 1)
-        c.setopt(c.URL, url)
-
-        with open(filename, 'wb') as f:
-            c.setopt(c.WRITEDATA, f)
-            try:
-                c.perform()
-            except c.error as error:
-                # errno, errstr = error
-                print(error)
-            # c.perform()
-            c.close()
-            f.close()
-        verbatim_size = xml_size_extractor(url+'.xml',  netrc_path, cookie_path)
-        if not os.path.isfile(filename) or os.path.getsize(filename) != verbatim_size :
-            print(f'Error downloading {filename}')
-            return url
-        return
+        c.close()
+        f.close()
+    return
 
 
 def file_path_creator(archive_folder, url):
@@ -197,25 +178,49 @@ def v_h_extractor(path):
     return h, v
 
 
-def download(pack):
+def file_withdraw(pack):
     archive_folder, netrc_path, cookie_path = pack[1]
 
-    url_250, url_500 = pack[0]
+    url = pack[0]
 
-    file_path_250 = file_path_creator(archive_folder, url_250)
-    file_path_500 = file_path_creator(archive_folder, url_500)
+    file_path = file_path_creator(archive_folder, url)
+    xml_file_path = file_path + '.xml'
 
-    failed = []
+    if os.path.isfile(xml_file_path):
+        verbatim_size = xml_size_extractor(xml_file_path)
+    else:
+        i = 0
+        xml_url = url + '.xml'
+        while i <= 3:
+            try:
+                download(xml_url, xml_file_path, netrc_path, cookie_path)
+            except:
+                i += 1
+            else:
+                break
+        if i == 2:
+            print(f'Error downloading {xml_url}, 3 attempts have been done. Please check manually')
 
-    fail = lifter(url_500, file_path_500, netrc_path, cookie_path)
-    if fail:
-        failed.append(fail)
+        verbatim_size = xml_size_extractor(xml_file_path)
 
-    fail = lifter(url_250, file_path_250, netrc_path, cookie_path)
-    if fail:
-        failed.append(fail)
+    if not os.path.isfile(file_path) or os.path.getsize(file_path) != verbatim_size:
+        i = 0
+        while i <= 3:
+            try:
+                download(url, file_path, netrc_path, cookie_path)
+            except:
+                print(f'Error downloading {url}')
 
-    return failed
+            if os.path.getsize(file_path) != verbatim_size:
+                print(f'Size error in {file_path}')
+                i += 1
+            else:
+                break
+        if os.path.getsize(file_path) != verbatim_size:
+            print(f'Multiple attempt of retreating file {url} have been conducted, please check manually')
+            return url
+
+    return
 
 
 @dask.delayed
@@ -433,38 +438,39 @@ def main():
     mod250_url = 'https://e4ftl01.cr.usgs.gov/MOLT/MOD09Q1.061/'
     mod500_url = 'https://e4ftl01.cr.usgs.gov/MOLT/MOD09A1.061/'
 
-    soup = explorer(mod250_url)
+    soup = scraping(mod250_url)
     print('Modis date list retreated')
 
     products_links = []
-    for link in soup.find_all('a')[-5:]:
-        soup_tiles_250 = explorer(mod250_url + link.get('href'))
-        soup_tiles_500 = explorer(mod500_url + link.get('href'))
+    for date_link in soup.find_all('a')[-5:]:
+        date_str = date_link.get('href')
+        soup_tiles_250 = scraping(mod250_url + date_str)
+        soup_tiles_500 = scraping(mod500_url + date_str)
 
         for hv in tile_list:
             v_t = str(hv[0]).zfill(2)
             h_t = str(hv[1]).zfill(2)
 
-            tile_250, tile_500 = [''] * 2
-
-            tile_250_list = soup_tiles_250.find_all(href=re.compile(fr'^.*(h{h_t}v{v_t}).*(hdf$)'))
+            tile_250_list = soup_tiles_250.find_all(href=re.compile(fr'^.*(h{h_t}v{v_t}).*(hdf)'))
             if tile_250_list:
                 tile_250 = tile_250_list[0].getText()
+                products_links.append(mod250_url + date_link.get('href') + tile_250)
 
-            tile_500_list = soup_tiles_500.find_all(href=re.compile(fr'^.*(h{h_t}v{v_t}).*(hdf$)'))
+            tile_500_list = soup_tiles_500.find_all(href=re.compile(fr'^.*(h{h_t}v{v_t}).*(hdf)'))
             if tile_500_list:
                 tile_500 = tile_500_list[0].getText()
-
-            if len(tile_250) == len(tile_500) and tile_250:
-                products_links.append(
-                    [mod250_url + link.get('href') + tile_250, mod500_url + link.get('href') + tile_500])
+                products_links.append(mod500_url + date_link.get('href') + tile_500)
 
     print('Product link created')
 
     # with Pool(5, maxtasksperchild=None) as p:
     #     failed = p.map(download, zip(products_links, [options] * len(products_links)), chunksize=1)
 
-    failed = thread_map(download, zip(products_links, [options] * len(products_links)), total=len(products_links))
+    failed = thread_map(file_withdraw, zip(products_links, [options] * len(products_links)), total=len(products_links))
+
+    # for product in products_links:
+    #     failed = file_withdraw([product, options])
+    #
 
     print('Products downloaded')
 
