@@ -344,7 +344,7 @@ async def lifter(s):
 
 
 async def download_list(D10_list, tile_range):
-    
+
     if D10_list[-1].day == 1:
                 D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{D10_list[-1].month.__str__().zfill(2)}11', '%Y%m%d').date()
     elif D10_list[-1].day == 11:
@@ -468,7 +468,7 @@ def _decades(data):
 # endregion
 
 
-# @dask.delayed
+@dask.delayed
 def filler(date, tile, s):
     print(f'Processing: {date}, {tile}')
     date = pd.to_datetime(date)
@@ -496,11 +496,11 @@ def filler(date, tile, s):
     #                          dask='parallelized').rename('mBlue')
     # meanGreen = xr.apply_ufunc(_bandsComposit,D10_ds['Oa05_toc'], D10_ds['Oa06_toc'], join='inner', dask='parallelized').rename('mGreen')
     meanRed = xr.apply_ufunc(_bands_composite, D10_ds['Oa07_toc'], D10_ds['Oa08_toc'], D10_ds['Oa09_toc'],
-                             D10_ds['Oa10_toc'], join='inner', dask='parallelized').rename('mRed').chunk({'time': -1})
+                             D10_ds['Oa10_toc'], join='inner', ).rename('mRed')
     meanNIR = xr.apply_ufunc(_bands_composite, D10_ds['Oa16_toc'], D10_ds['Oa17_toc'], D10_ds['Oa18_toc'],
-                             join='inner', dask='parallelized').rename('mNIR').chunk({'time': -1})
+                             join='inner',).rename('mNIR')
     meanSWIR = xr.apply_ufunc(_bands_composite, D10_ds['S5_an_toc'],
-                              join='inner', dask='parallelized').rename('mSWIR').chunk({'time': -1})
+                              join='inner', ).rename('mSWIR')
 
     # EVI = _evi(meanNIR, meanRed, meanBlu)
     # EVI_cleaned = EVI.where(~np.isnan(EVI), -999)
@@ -508,7 +508,7 @@ def filler(date, tile, s):
     NDVI = _ndvi(meanNIR, meanRed)
     NDVI_cleaned = NDVI.where(~np.isnan(NDVI), -999)
 
-    argmax = NDVI_cleaned.argmax('time', skipna=True).compute()
+    argmax = NDVI_cleaned.argmax('time', skipna=True)
     NDVI_cleaned = NDVI.where(NDVI != -999, np.NaN)
 
     # max_NDVI = NDVI_cleaned.isel({'time': argmax})
@@ -539,10 +539,9 @@ def filler(date, tile, s):
                          input_core_dims=[['band']],
                          output_core_dims=[['HSV']],
                          keep_attrs=False,
-                         dask='parallelized',
-                         output_dtypes=[float],
-                         dask_gufunc_kwargs={'output_sizes': {'HSV': 3}})
+                         )
     h = out[:, :, 0].rename('H')
+
     h_squeezed = h.squeeze()
 
     # h = h_squeezed.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
@@ -558,9 +557,7 @@ def filler(date, tile, s):
     # greenness
     gvi = xr.apply_ufunc(_gvi, max_NDVI, h_squeezed,
                          input_core_dims=[['lon', 'lat'], ['lon', 'lat']],
-                         output_core_dims=[['lon', 'lat']],
-                         dask='parallelized',
-                         dask_gufunc_kwargs={'allow_rechunk': True})
+                         output_core_dims=[['lon', 'lat']])
 
     gvi = gvi.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0).to_dataset(name='GVI')
     gvi = gvi.transpose('time', 'lat', 'lon')
@@ -606,7 +603,7 @@ def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
         else:
             time_region = slice(pos, pos+1, 1)
 
-    gvi.to_zarr(container, compute=True, region={'time': time_region, 'lat': lat_region, 'lon': lon_region})
+    gvi.to_zarr(container, region={'time': time_region, 'lat': lat_region, 'lon': lon_region})
 
 
 if __name__ == '__main__':
@@ -684,7 +681,7 @@ if __name__ == '__main__':
         client = Client(cluster)
         client.wait_for_workers(workers)
     elif env == 'Linux' and HPC is False:
-        cluster = LocalCluster(n_workers=workers, processes=True, **{'local_directory': '/localdata'})
+        cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1, **{'local_directory': '/localdata'})
         client = Client(cluster)
         client.wait_for_workers(workers)
     else:
@@ -693,12 +690,8 @@ if __name__ == '__main__':
         client.wait_for_workers((workers * 4)/64)
 
     if not s.D10_required.empty:
-        # tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
-        # dask.compute(tiles_update)
-
-        for tile in s.tile_list:
-            for obs_date in s.D10_required.values:
-                filler(obs_date, tile, s)
+        tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
+        dask.compute(tiles_update)
 
     gvi = xr.open_zarr(s.archive_path, consolidated=True).GVI[-6:, :, :]
 
