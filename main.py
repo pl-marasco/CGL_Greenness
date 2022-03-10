@@ -565,6 +565,7 @@ def filler(date, tile, s):
 
     zarr_update(gvi, tile, s.archive_path, s.AOI_TL_x, s.AOI_TL_y, s.AOI_BR_x, s.AOI_BR_y)
 
+    return
 
 def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
     tile_x = int(tile[1:3])
@@ -603,7 +604,9 @@ def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
         else:
             time_region = slice(pos, pos+1, 1)
 
-    gvi.to_zarr(container, region={'time': time_region, 'lat': lat_region, 'lon': lon_region})
+    gvi.to_zarr(container, region={'time': time_region, 'lat': lat_region, 'lon': lon_region}, compute=True)
+
+    return
 
 
 if __name__ == '__main__':
@@ -677,7 +680,7 @@ if __name__ == '__main__':
         pass
 
     if env == 'Windows':
-        cluster = LocalCluster(n_workers=workers, processes=True)
+        cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1)
         client = Client(cluster)
         client.wait_for_workers(workers)
     elif env == 'Linux' and HPC is False:
