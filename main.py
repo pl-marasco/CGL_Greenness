@@ -344,8 +344,7 @@ async def download_list(D10_list, tile_range):
 
 
 def ds_opener(band_path):
-    # ds = xr.open_dataset(band_path, chunks='auto')
-    ds = xr.open_dataset(band_path, chunks={'lat': 1680, 'lon': 1680})
+    ds = xr.open_dataset(band_path)
     time = pd.to_datetime(ds.attrs['time_coverage_start'])
 
     if not hasattr(ds, 'time'):
@@ -447,11 +446,11 @@ def filler(date, tile, s):
     #                          dask='parallelized').rename('mBlue')
     # meanGreen = xr.apply_ufunc(_bandsComposit,D10_ds['Oa05_toc'], D10_ds['Oa06_toc'], join='inner', dask='parallelized').rename('mGreen')
     meanRed = xr.apply_ufunc(_bandscomposit, D10_ds['Oa07_toc'], D10_ds['Oa08_toc'], D10_ds['Oa09_toc'],
-                             D10_ds['Oa10_toc'], join='inner', dask='parallelized').rename('mRed').chunk({'time': -1})
+                             D10_ds['Oa10_toc'], join='inner', dask='parallelized').rename('mRed')
     meanNIR = xr.apply_ufunc(_bandscomposit, D10_ds['Oa16_toc'], D10_ds['Oa17_toc'], D10_ds['Oa18_toc'],
-                             join='inner', dask='parallelized').rename('mNIR').chunk({'time': -1})
+                             join='inner', dask='parallelized').rename('mNIR')
     meanSWIR = xr.apply_ufunc(_bandscomposit, D10_ds['S5_an_toc'],
-                              join='inner', dask='parallelized').rename('mSWIR').chunk({'time': -1})
+                              join='inner', dask='parallelized').rename('mSWIR')
 
     # EVI = _evi(meanNIR, meanRed, meanBlu)
     # EVI_cleaned = EVI.where(~np.isnan(EVI), -999)
@@ -459,7 +458,7 @@ def filler(date, tile, s):
     NDVI = _ndvi(meanNIR, meanRed)
     NDVI_cleaned = NDVI.where(~np.isnan(NDVI), -999)
 
-    argmax = NDVI_cleaned.argmax('time', skipna=True).compute()
+    argmax = NDVI_cleaned.argmax('time', skipna=True)
 
     NDVI_cleaned = NDVI.where(NDVI != -999, np.NaN)
 
@@ -485,15 +484,11 @@ def filler(date, tile, s):
     rgb = rgb.rename('RGB') \
         .rename({'time': 'band'}) \
         .assign_coords({'band': [1, 2, 3]}) \
-        .chunk({'band': 3})
 
     out = xr.apply_ufunc(rgb2hsv, rgb,
                          input_core_dims=[['band']],
                          output_core_dims=[['HSV']],
-                         keep_attrs=False,
-                         dask='parallelized',
-                         output_dtypes=[float],
-                         dask_gufunc_kwargs={'output_sizes': {'HSV': 3}})
+                         keep_attrs=False)
     h = out[:, :, 0].rename('H')
 
     h_squeezed = h.squeeze()
@@ -511,9 +506,7 @@ def filler(date, tile, s):
     # greenness
     gvi = xr.apply_ufunc(_gvi, max_NDVI, h_squeezed,
                          input_core_dims=[['lon', 'lat'], ['lon', 'lat']],
-                         output_core_dims=[['lon', 'lat']],
-                         dask='parallelized',
-                         dask_gufunc_kwargs={'allow_rechunk': True})
+                         output_core_dims=[['lon', 'lat']])
 
     gvi = gvi.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0).to_dataset(name='GVI')
     gvi = gvi.transpose('time', 'lat', 'lon')
