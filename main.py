@@ -301,13 +301,32 @@ def ds_opener(band_path):
                               'S2_an_toc', 'S2_an_toc_error',
                               'S3_an_toc', 'S3_an_toc_error',
                               'S6_an_toc', 'S6_an_toc_error',
-                              ])
+                              'Oa07_toc_error',
+                              'Oa08_toc_error',
+                              'Oa09_toc_error',
+                              'Oa10_toc_error',
+                              'Oa16_toc_error',
+                              'Oa17_toc_error',
+                              'Oa18_toc_error',
+                              'S5_an_toc_error',
+                              'SAA_olci',
+                              'SZA_olci',
+                              'VAA_olci',
+                              'VZA_olci',
+                              'SAA_slstr',
+                              'SZA_slstr',
+                              'VAA_slstr',
+                              'VZA_slstr',
+                              'cloud_an',
+                              'quality_flags',
+                              'pixel_classif_flags',
+                              'AC_process_flag'
+                                          ])
     time = pd.to_datetime(ds.attrs['time_coverage_start'])
 
     if not hasattr(ds, 'time'):
         ds = ds.assign_coords({'time': time})
         ds = ds.expand_dims(dim='time', axis=0)
-
     return ds
 
 
@@ -425,8 +444,7 @@ def filler(date, tile, s):
 
     rgb = rgb.rename('RGB') \
         .rename({'time': 'band'}) \
-        .assign_coords({'band': [1, 2, 3]}) \
-        .chunk({'band': 3})
+        .assign_coords({'band': [1, 2, 3]})
 
     out = xr.apply_ufunc(rgb2hsv, rgb,
                          input_core_dims=[['band']],
@@ -506,7 +524,8 @@ if __name__ == '__main__':
     else:
         local_folder = r'/BGFS/COMMON/maraspi/S3'
         cluster = PBSCluster(cores=32,
-                             processes=4,
+                             processes=7,
+                             threads_per_worker=1,
                              # memory="240GB",
                              project='DASK_Parabellum',
                              queue='high',
@@ -514,7 +533,7 @@ if __name__ == '__main__':
                              walltime='12:00:00',
                              # death_timeout=240,
                              log_directory='/tmp/marapi/workers/')
-        workers = 32
+        workers = 2
 
     archive_path = os.path.join(local_folder, 'archive.zarr')
     grid_path = os.path.join(local_folder, 'grid.geojson')
