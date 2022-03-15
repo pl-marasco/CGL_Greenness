@@ -9,10 +9,13 @@ import dask
 import platform
 import argparse
 
+from numba import jit
+
 from distributed import Client, LocalCluster
 from dask_jobqueue import PBSCluster
 from urllib.parse import urljoin
 from skimage.color import rgb2hsv
+
 
 np.seterr(all='ignore')
 
@@ -169,31 +172,31 @@ class ProgressHandler:
 #     return dek_tile_list
 
 
-async def download_list(dek_not_available):
-
-    dl_list = []
-    for i, dek in enumerate(dek_not_available):
-        dk_start, sensor, tile_range = dek
-        if i == len(dek_not_available)-1 or sensor == 'B':
-            continue
-
-        if dk_start.day == 1:
-            dk_end = datetime.datetime.strptime(f'{dk_start.year}{dk_start.month.__str__().zfill(2)}11', '%Y%m%d').date()
-        elif dk_start.day == 11:
-            dk_end = datetime.datetime.strptime(f'{dk_start.year}{dk_start.month.__str__().zfill(2)}21', '%Y%m%d').date()
-        else:
-            if dk_start.month == 12:
-                dk_end = datetime.datetime.strptime(f'{dk_start.year+1}0101', '%Y%m%d').date()
-            else:
-                dk_end = datetime.datetime.strptime(f'{dk_start.year}{(dk_start.month+1).__str__().zfill(2)}01', '%Y%m%d').date()
-
-        date_range = [dk_start + datetime.timedelta(days=i) for i in range((dk_end - dk_start).days)]
-
-        for date in date_range:
-            dl_list.append([date, tile_range])
-            # TODO aD10 local file presence
-
-    return dl_list
+# async def download_list(dek_not_available):
+#
+#     dl_list = []
+#     for i, dek in enumerate(dek_not_available):
+#         dk_start, sensor, tile_range = dek
+#         if i == len(dek_not_available) or sensor == 'B':
+#             continue
+#
+#         if dk_start.day == 1:
+#             dk_end = datetime.datetime.strptime(f'{dk_start.year}{dk_start.month.__str__().zfill(2)}11', '%Y%m%d').date()
+#         elif dk_start.day == 11:
+#             dk_end = datetime.datetime.strptime(f'{dk_start.year}{dk_start.month.__str__().zfill(2)}21', '%Y%m%d').date()
+#         else:
+#             if dk_start.month == 12:
+#                 dk_end = datetime.datetime.strptime(f'{dk_start.year+1}0101', '%Y%m%d').date()
+#             else:
+#                 dk_end = datetime.datetime.strptime(f'{dk_start.year}{(dk_start.month+1).__str__().zfill(2)}01', '%Y%m%d').date()
+#
+#         date_range = [dk_start + datetime.timedelta(days=i) for i in range((dk_end - dk_start).days)]
+#
+#         for date in date_range:
+#             dl_list.append([date, tile_range])
+#             # TODO aD10 local file presence
+#
+#     return dl_list
 
 # for dt in date_range:
 #
@@ -339,12 +342,57 @@ async def lifter(s):
 
 
 async def download_list(D10_list, tile_range):
-    date_range = pd.date_range(D10_list[0], D10_list[-1], freq='D')
+    
+    if D10_list[-1].day == 1:
+                D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{D10_list[-1].month.__str__().zfill(2)}11', '%Y%m%d').date()
+    elif D10_list[-1].day == 11:
+        D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{D10_list[-1].month.__str__().zfill(2)}21', '%Y%m%d').date()
+    else:
+        if D10_list[-1].month == 12:
+            D10_end = datetime.datetime.strptime(f'{D10_list[-1].year+1}0101', '%Y%m%d').date()
+        else:
+            D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{(D10_list[-1].month+1).__str__().zfill(2)}01', '%Y%m%d').date()
+
+    date_range = pd.date_range(D10_list[0], D10_end, freq='D')
     return list(zip(date_range, [tile_range] * date_range.size))
 
 
 def ds_opener(band_path):
-    ds = xr.open_dataset(band_path)
+    ds = xr.open_dataset(band_path, chunks='auto')
+    # ds = xr.open_dataset(band_path, chunks={'lat': 168, 'lon': 168})
+    ds = ds.drop(['Oa02_toc', 'Oa02_toc_error',
+                              'Oa03_toc', 'Oa03_toc_error',
+                              'Oa04_toc', 'Oa04_toc_error',
+                              'Oa05_toc', 'Oa05_toc_error',
+                              'Oa06_toc', 'Oa06_toc_error',
+                              #'Oa07_toc', 'Oa07_toc_error',
+                              #'Oa08_toc', 'Oa08_toc_error',
+                              #'Oa09_toc', 'Oa09_toc_error',
+                              #'Oa10_toc', 'Oa10_toc_error',
+                              'Oa11_toc', 'Oa11_toc_error',
+                              'Oa12_toc', 'Oa12_toc_error',
+                              #'Oa16_toc', 'Oa16_toc_error',
+                              #'Oa17_toc', 'Oa17_toc_error',
+                              #'Oa18_toc', 'Oa18_toc_error',
+                              'Oa21_toc', 'Oa21_toc_error',
+                              'S1_an_toc', 'S1_an_toc_error',
+                              'S2_an_toc', 'S2_an_toc_error',
+                              'S3_an_toc', 'S3_an_toc_error',
+                              #'S5_an_toc', 'S5_an_toc_error',
+                              'S6_an_toc', 'S6_an_toc_error',
+                              #'SAA_olci',
+                              #'SZA_olci',
+                              #'VAA_olci',
+                              #'VZA_olci',
+                              #'SAA_slstr',
+                              #'SZA_slstr',
+                              #'VAA_slstr',
+                              #'VZA_slstr',
+                              #'cloud_an',
+                              #'quality_flags',
+                              #'pixel_classif_flags',
+                              #'AC_process_flag'
+                              ])
     time = pd.to_datetime(ds.attrs['time_coverage_start'])
 
     if not hasattr(ds, 'time'):
@@ -357,8 +405,8 @@ def ds_opener(band_path):
 # endregion
 
 # region Multispectral
-def _bandscomposit(*args, **kwargs):
-    return np.nanmean(args, axis=0)
+def _bands_composite(*bands):
+    return np.nanmean(bands, axis=0)
 
 
 def _rescale(in_array, input_low, input_high, out_low=0, out_high=1):
@@ -418,24 +466,24 @@ def _decades(data):
 # endregion
 
 
-@dask.delayed
+# @dask.delayed
 def filler(date, tile, s):
     print(f'Processing: {date}, {tile}')
     date = pd.to_datetime(date)
     if date.day == 1:
-            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{date.month}11', format='%Y%m%d'))
+            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{date.month.__str__().zfill(2)}11', format='%Y%m%d'))
     elif date.day == 11:
-            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{date.month}21', format='%Y%m%d'))
+            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{date.month.__str__().zfill(2)}21', format='%Y%m%d'))
     else:
          if date.month != 12:
-            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{date.month+1}01', format='%Y%m%d'))
+            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{str(date.month+1).zfill(2)}01', format='%Y%m%d'))
          else:
             D10_range = pd.date_range(date, pd.to_datetime(f'{date.year+1}0101', format='%Y%m%d'))
 
     tiles_path = []
     for D in D10_range[:-1]:
         yr, mm, str_date = split_date(D)
-        absolute_path = os.path.join(s.local_folder, 'archive', yr, mm, str_date, f'*_{tile}_S3A*')
+        absolute_path = os.path.join(s.local_folder, 'archive', yr, mm, str_date, f'*_{tile}_S3*')
         paths = glob.glob(absolute_path)
         for p in paths:
             tiles_path.append(ds_opener(p))
@@ -445,12 +493,12 @@ def filler(date, tile, s):
     # meanBlu = xr.apply_ufunc(_bandscomposit, D10_ds['Oa03_toc'], D10_ds['Oa04_toc'], join='inner',
     #                          dask='parallelized').rename('mBlue')
     # meanGreen = xr.apply_ufunc(_bandsComposit,D10_ds['Oa05_toc'], D10_ds['Oa06_toc'], join='inner', dask='parallelized').rename('mGreen')
-    meanRed = xr.apply_ufunc(_bandscomposit, D10_ds['Oa07_toc'], D10_ds['Oa08_toc'], D10_ds['Oa09_toc'],
-                             D10_ds['Oa10_toc'], join='inner', dask='parallelized').rename('mRed')
-    meanNIR = xr.apply_ufunc(_bandscomposit, D10_ds['Oa16_toc'], D10_ds['Oa17_toc'], D10_ds['Oa18_toc'],
-                             join='inner', dask='parallelized').rename('mNIR')
-    meanSWIR = xr.apply_ufunc(_bandscomposit, D10_ds['S5_an_toc'],
-                              join='inner', dask='parallelized').rename('mSWIR')
+    meanRed = xr.apply_ufunc(_bands_composite, D10_ds['Oa07_toc'], D10_ds['Oa08_toc'], D10_ds['Oa09_toc'],
+                             D10_ds['Oa10_toc'], join='inner', dask='parallelized').rename('mRed').chunk({'time': -1})
+    meanNIR = xr.apply_ufunc(_bands_composite, D10_ds['Oa16_toc'], D10_ds['Oa17_toc'], D10_ds['Oa18_toc'],
+                             join='inner', dask='parallelized').rename('mNIR').chunk({'time': -1})
+    meanSWIR = xr.apply_ufunc(_bands_composite, D10_ds['S5_an_toc'],
+                              join='inner', dask='parallelized').rename('mSWIR').chunk({'time': -1})
 
     # EVI = _evi(meanNIR, meanRed, meanBlu)
     # EVI_cleaned = EVI.where(~np.isnan(EVI), -999)
@@ -458,7 +506,7 @@ def filler(date, tile, s):
     NDVI = _ndvi(meanNIR, meanRed)
     NDVI_cleaned = NDVI.where(~np.isnan(NDVI), -999)
 
-    argmax = NDVI_cleaned.argmax('time', skipna=True)
+    argmax = NDVI_cleaned.argmax('time', skipna=True).compute()
 
     NDVI_cleaned = NDVI.where(NDVI != -999, np.NaN)
 
@@ -484,11 +532,15 @@ def filler(date, tile, s):
     rgb = rgb.rename('RGB') \
         .rename({'time': 'band'}) \
         .assign_coords({'band': [1, 2, 3]}) \
+        .chunk({'band': 3})
 
     out = xr.apply_ufunc(rgb2hsv, rgb,
                          input_core_dims=[['band']],
                          output_core_dims=[['HSV']],
-                         keep_attrs=False)
+                         keep_attrs=False,
+                         dask='parallelized',
+                         output_dtypes=[float],
+                         dask_gufunc_kwargs={'output_sizes': {'HSV': 3}})
     h = out[:, :, 0].rename('H')
 
     h_squeezed = h.squeeze()
@@ -506,7 +558,9 @@ def filler(date, tile, s):
     # greenness
     gvi = xr.apply_ufunc(_gvi, max_NDVI, h_squeezed,
                          input_core_dims=[['lon', 'lat'], ['lon', 'lat']],
-                         output_core_dims=[['lon', 'lat']])
+                         output_core_dims=[['lon', 'lat']],
+                         dask='parallelized',
+                         dask_gufunc_kwargs={'allow_rechunk': True})
 
     gvi = gvi.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0).to_dataset(name='GVI')
     gvi = gvi.transpose('time', 'lat', 'lon')
@@ -514,7 +568,6 @@ def filler(date, tile, s):
 
     zarr_update(gvi, tile, s.archive_path, s.AOI_TL_x, s.AOI_TL_y, s.AOI_BR_x, s.AOI_BR_y)
 
-    return
 
 def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
     tile_x = int(tile[1:3])
@@ -553,9 +606,7 @@ def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
         else:
             time_region = slice(pos, pos+1, 1)
 
-    gvi.to_zarr(container, region={'time': time_region, 'lat': lat_region, 'lon': lon_region}, compute=True)
-
-    return
+    gvi.to_zarr(container, region={'time': time_region, 'lat': lat_region, 'lon': lon_region})
 
 
 if __name__ == '__main__':
@@ -629,11 +680,11 @@ if __name__ == '__main__':
         pass
 
     if env == 'Windows':
-        cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1)
+        cluster = LocalCluster(n_workers=workers, processes=True)
         client = Client(cluster)
         client.wait_for_workers(workers)
     elif env == 'Linux' and HPC is False:
-        cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1, **{'local_directory': '/localdata'})
+        cluster = LocalCluster(n_workers=workers, processes=True, **{'local_directory': '/localdata'})
         client = Client(cluster)
         client.wait_for_workers(workers)
     else:
@@ -642,8 +693,12 @@ if __name__ == '__main__':
         client.wait_for_workers((workers * 4)/64)
 
     if not s.D10_required.empty:
-        tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
-        dask.compute(tiles_update)
+        # tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
+        # dask.compute(tiles_update)
+
+        for tile in s.tile_list:
+            for obs_date in s.D10_required.values:
+                filler(obs_date, tile, s)
 
     gvi = xr.open_zarr(s.archive_path, consolidated=True).GVI[-6:, :, :]
 
