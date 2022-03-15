@@ -2,6 +2,8 @@ import datetime
 import asyncio, asyncssh
 import sys, os
 import glob
+
+import numba
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -358,8 +360,8 @@ async def download_list(D10_list, tile_range):
 
 
 def ds_opener(band_path):
-    ds = xr.open_dataset(band_path, chunks='auto')
-    # ds = xr.open_dataset(band_path, chunks={'lat': 168, 'lon': 168})
+    #ds = xr.open_dataset(band_path, chunks='auto')
+    ds = xr.open_dataset(band_path, chunks={'lat': 3360, 'lon': 3360})
     ds = ds.drop(['Oa02_toc', 'Oa02_toc_error',
                               'Oa03_toc', 'Oa03_toc_error',
                               'Oa04_toc', 'Oa04_toc_error',
@@ -507,7 +509,6 @@ def filler(date, tile, s):
     NDVI_cleaned = NDVI.where(~np.isnan(NDVI), -999)
 
     argmax = NDVI_cleaned.argmax('time', skipna=True).compute()
-
     NDVI_cleaned = NDVI.where(NDVI != -999, np.NaN)
 
     # max_NDVI = NDVI_cleaned.isel({'time': argmax})
@@ -542,7 +543,6 @@ def filler(date, tile, s):
                          output_dtypes=[float],
                          dask_gufunc_kwargs={'output_sizes': {'HSV': 3}})
     h = out[:, :, 0].rename('H')
-
     h_squeezed = h.squeeze()
 
     # h = h_squeezed.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
@@ -606,7 +606,7 @@ def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
         else:
             time_region = slice(pos, pos+1, 1)
 
-    gvi.to_zarr(container, region={'time': time_region, 'lat': lat_region, 'lon': lon_region})
+    gvi.to_zarr(container, compute=True, region={'time': time_region, 'lat': lat_region, 'lon': lon_region})
 
 
 if __name__ == '__main__':
