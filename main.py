@@ -336,7 +336,6 @@ def ds_opener(band_path):
 def _bands_composite(*bands):
     return np.nanmean(bands, axis=0)
 
-
 def _rescale(in_array, input_low, input_high, out_low=0, out_high=1):
     if type(out_low) is int and type(out_high) is int:
         return (((in_array - input_low) / (input_high - input_low)) * (out_high - out_low) + out_low).astype(int)
@@ -356,6 +355,7 @@ def _brightness(Red, Green, Blue):
 
 def _ndvi(NIR, Red):
     da = (NIR - Red) / (NIR + Red)
+    da.where((da >= -1) & (da <= 1), np.NAN)
     da.name = 'NDVI'
     return da
 
@@ -420,17 +420,18 @@ def filler(date, tile, s):
     meanSWIR = xr.apply_ufunc(_bands_composite, D10_ds['S5_an_toc'],
                               join='inner', ).rename('mSWIR')
 
+    del(D10_ds)
+
     NDVI = _ndvi(meanNIR, meanRed)
-    NDVI_cleaned = NDVI.where(~np.isnan(NDVI), -999)
 
-    argmax = NDVI_cleaned.argmax('time', skipna=True)
-    NDVI_cleaned = NDVI.where(NDVI != -999, np.NaN)
-
-    max_NDVI = NDVI_cleaned.max('time', skipna=True)
+    argmax = NDVI.argmax('time', skipna=True)
+    max_NDVI = NDVI.max('time', skipna=True)
 
     max_Red = meanRed.isel({'time': argmax})
     max_NIR = meanNIR.isel({'time': argmax})
     max_SWIR = meanSWIR.isel({'time': argmax})
+
+    del(meanRed, meanNIR, meanSWIR)
 
     max_Red = max_Red.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
     max_NIR = max_NIR.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
@@ -451,8 +452,9 @@ def filler(date, tile, s):
                          output_core_dims=[['HSV']],
                          keep_attrs=False,
                          )
-    h = out[:, :, 0].rename('H')
+    del(rgb, max_Red, max_NIR, max_SWIR, SWIR_rescaled, NIR_rescaled, RED_rescaled)
 
+    h = out[:, :, 0].rename('H')
     h_squeezed = h.squeeze()
 
     # greenness
