@@ -443,6 +443,8 @@ def filler(date, tile, s):
 
     rgb = xr.concat([SWIR_rescaled, NIR_rescaled, RED_rescaled], dim='time')
 
+    del(max_Red, max_NIR, max_SWIR, SWIR_rescaled, NIR_rescaled, RED_rescaled)
+
     rgb = rgb.rename('RGB') \
         .rename({'time': 'band'}) \
         .assign_coords({'band': [1, 2, 3]})
@@ -452,13 +454,12 @@ def filler(date, tile, s):
                          output_core_dims=[['HSV']],
                          keep_attrs=False,
                          )
-    del(rgb, max_Red, max_NIR, max_SWIR, SWIR_rescaled, NIR_rescaled, RED_rescaled)
+    del(rgb, )
 
-    h = out[:, :, 0].rename('H')
-    h_squeezed = h.squeeze()
+    h = out[:, :, 0].rename('H').squeeze()
 
     # greenness
-    gvi = xr.apply_ufunc(_gvi, max_NDVI, h_squeezed,
+    gvi = xr.apply_ufunc(_gvi, max_NDVI, h,
                          input_core_dims=[['lon', 'lat'], ['lon', 'lat']],
                          output_core_dims=[['lon', 'lat']])
 
