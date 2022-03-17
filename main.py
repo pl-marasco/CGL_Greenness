@@ -18,11 +18,10 @@ from dask_jobqueue import PBSCluster
 from urllib.parse import urljoin
 from skimage.color import rgb2hsv
 
-
 np.seterr(all='ignore')
 
 
-class Settings:
+class ProcessSettings:
 
     def __init__(s, AOI, pxl_sz, grid_path, s_date, time_delta,
                  local_folder, out_path, out_name, archive_path, flush,
@@ -32,7 +31,7 @@ class Settings:
         s.start_ref_date = s.__10D_ref_date_finder(s_date)
         s.end_ref_date = s.__10D_ref_date_finder(s.start_ref_date - datetime.timedelta(time_delta))
         s.date_range = s.__date_range(s.start_ref_date, s.end_ref_date)
-        s.dek_range = s.__dek_range(s.date_range)
+        s.D10_range = s.__D10_range_create(s.date_range)
         s.D10_required = None
 
         # space
@@ -59,7 +58,7 @@ class Settings:
         # local paths
         s.local_folder = local_folder
         s.out_path = out_path
-        s.out_name = f'{out_name}_{str(s.dek_range[-2].year)}{str(s.dek_range[-2].month).zfill(2)}{str(s.dek_range[-2].day).zfill(2)}.tif'
+        s.out_name = f'{out_name}_{str(s.D10_range[-2].year)}{str(s.D10_range[-2].month).zfill(2)}{str(s.D10_range[-2].day).zfill(2)}.tif'
 
         s.results_path = os.path.join(s.out_path, s.out_name)
         s.archive_path = archive_path
@@ -84,18 +83,16 @@ class Settings:
         grid = {}
         for xi, x in enumerate(cols[:-1]):
             for yi, y in enumerate(rows[:-1]):
-                grid[f'X{str(xi).zfill(2)}Y{str(yi).zfill(2)}'] = Polygon([(x, y), (x + wide, y), (x + wide, y - length), (x, y - length)])
+                grid[f'X{str(xi).zfill(2)}Y{str(yi).zfill(2)}'] = Polygon(
+                    [(x, y), (x + wide, y), (x + wide, y - length), (x, y - length)])
         return grid
 
-    @classmethod
     def __tile(self, x, y):
         return f'X{str(x).zfill(2)}Y{str(y).zfill(2)}'
 
-    @classmethod
     def __range(self, min, max):
         return range(min, max + 1)
 
-    @classmethod
     def __10D_ref_date_finder(self, date):
         day = date.day
         if 1 <= day <= 11:
@@ -106,11 +103,9 @@ class Settings:
             ref_day = 21
         return datetime.datetime(date.year, date.month, ref_day)
 
-    @classmethod
     def __date_range(self, start, end):
-        return [end.date() + datetime.timedelta(days=idate) for idate in range(0, (start - end).days + 1)]
+        return pd.date_range(end, start, freq='D', inclusive='both')
 
-    @classmethod
     def __tile_list(self, x_range, y_range):
         tile_list = []
         for i, v in enumerate(y_range):
@@ -120,10 +115,8 @@ class Settings:
 
         return sum(tile_list, [])
 
-    @classmethod
-    def __dek_range(self, date_range):
-        d = [i for i in date_range if i.day in [1, 11, 21]]
-        return pd.to_datetime(d)
+    def __D10_range_create(self, date_range):
+        return date_range[date_range.day.isin([1, 11, 21])]
 
 
 class DownloadError:
@@ -147,7 +140,6 @@ class ProgressHandler:
 
 
 # region Managment
-
 async def is_local(file, tile_list, local_path, yr, mm, str_date):
     if file.filename in ['.', '..', 'manifest.txt']:
         return True
@@ -215,8 +207,8 @@ def archive_creator(archive_path, D10_dates, lat_n, lon_n, minx, maxx, maxy, min
     empty_array = dask.array.empty(shape=(time_n, lat_n, lon_n), chunks=(1, 3360, 3360))
     zero_array = dask.array.zeros_like(empty_array)
 
-    lon = np.round(np.linspace(minx, maxx, lon_n, endpoint=False),8).squeeze()
-    lat = np.round(np.linspace(maxy, miny, lat_n, endpoint=False),8).squeeze()
+    lon = np.round(np.linspace(minx, maxx, lon_n, endpoint=False), 8).squeeze()
+    lat = np.round(np.linspace(maxy, miny, lat_n, endpoint=False), 8).squeeze()
 
     gvi = xr.DataArray(data=zero_array, coords={'time': D10_dates[:-1], 'lat': lat.T, 'lon': lon.T, }, name='GVI')
 
@@ -272,16 +264,18 @@ async def lifter(s):
 
 
 async def download_list(D10_list, tile_range):
-
     if D10_list[-1].day == 1:
-                D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{D10_list[-1].month.__str__().zfill(2)}11', '%Y%m%d').date()
+        D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{D10_list[-1].month.__str__().zfill(2)}11',
+                                             '%Y%m%d').date()
     elif D10_list[-1].day == 11:
-        D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{D10_list[-1].month.__str__().zfill(2)}21', '%Y%m%d').date()
+        D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{D10_list[-1].month.__str__().zfill(2)}21',
+                                             '%Y%m%d').date()
     else:
         if D10_list[-1].month == 12:
-            D10_end = datetime.datetime.strptime(f'{D10_list[-1].year+1}0101', '%Y%m%d').date()
+            D10_end = datetime.datetime.strptime(f'{D10_list[-1].year + 1}0101', '%Y%m%d').date()
         else:
-            D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{(D10_list[-1].month+1).__str__().zfill(2)}01', '%Y%m%d').date()
+            D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{(D10_list[-1].month + 1).__str__().zfill(2)}01',
+                                                 '%Y%m%d').date()
 
     date_range = pd.date_range(D10_list[0], D10_end, freq='D')
     return list(zip(date_range, [tile_range] * date_range.size))
@@ -290,38 +284,38 @@ async def download_list(D10_list, tile_range):
 def ds_opener(band_path):
     ds = xr.open_dataset(band_path)
     ds = ds.drop(['Oa02_toc', 'Oa02_toc_error',
-                              'Oa03_toc', 'Oa03_toc_error',
-                              'Oa04_toc', 'Oa04_toc_error',
-                              'Oa05_toc', 'Oa05_toc_error',
-                              'Oa06_toc', 'Oa06_toc_error',
-                              'Oa11_toc', 'Oa11_toc_error',
-                              'Oa12_toc', 'Oa12_toc_error',
-                              'Oa21_toc', 'Oa21_toc_error',
-                              'S1_an_toc', 'S1_an_toc_error',
-                              'S2_an_toc', 'S2_an_toc_error',
-                              'S3_an_toc', 'S3_an_toc_error',
-                              'S6_an_toc', 'S6_an_toc_error',
-                              'Oa07_toc_error',
-                              'Oa08_toc_error',
-                              'Oa09_toc_error',
-                              'Oa10_toc_error',
-                              'Oa16_toc_error',
-                              'Oa17_toc_error',
-                              'Oa18_toc_error',
-                              'S5_an_toc_error',
-                              'SAA_olci',
-                              'SZA_olci',
-                              'VAA_olci',
-                              'VZA_olci',
-                              'SAA_slstr',
-                              'SZA_slstr',
-                              'VAA_slstr',
-                              'VZA_slstr',
-                              'cloud_an',
-                              'quality_flags',
-                              'pixel_classif_flags',
-                              'AC_process_flag'
-                                          ])
+                  'Oa03_toc', 'Oa03_toc_error',
+                  'Oa04_toc', 'Oa04_toc_error',
+                  'Oa05_toc', 'Oa05_toc_error',
+                  'Oa06_toc', 'Oa06_toc_error',
+                  'Oa11_toc', 'Oa11_toc_error',
+                  'Oa12_toc', 'Oa12_toc_error',
+                  'Oa21_toc', 'Oa21_toc_error',
+                  'S1_an_toc', 'S1_an_toc_error',
+                  'S2_an_toc', 'S2_an_toc_error',
+                  'S3_an_toc', 'S3_an_toc_error',
+                  'S6_an_toc', 'S6_an_toc_error',
+                  'Oa07_toc_error',
+                  'Oa08_toc_error',
+                  'Oa09_toc_error',
+                  'Oa10_toc_error',
+                  'Oa16_toc_error',
+                  'Oa17_toc_error',
+                  'Oa18_toc_error',
+                  'S5_an_toc_error',
+                  'SAA_olci',
+                  'SZA_olci',
+                  'VAA_olci',
+                  'VZA_olci',
+                  'SAA_slstr',
+                  'SZA_slstr',
+                  'VAA_slstr',
+                  'VZA_slstr',
+                  'cloud_an',
+                  'quality_flags',
+                  'pixel_classif_flags',
+                  'AC_process_flag'
+                  ])
     time = pd.to_datetime(ds.attrs['time_coverage_start'])
 
     if not hasattr(ds, 'time'):
@@ -335,6 +329,7 @@ def ds_opener(band_path):
 # region Multispectral
 def _bands_composite(*bands):
     return np.nanmean(bands, axis=0)
+
 
 def _rescale(in_array, input_low, input_high, out_low=0, out_high=1):
     if type(out_low) is int and type(out_high) is int:
@@ -386,22 +381,25 @@ def _decades(data):
     else:
         return -999
 
-# endregion
 
+# endregion
 
 @dask.delayed
 def filler(date, tile, s):
     print(f'Processing: {date}, {tile}')
     date = pd.to_datetime(date)
     if date.day == 1:
-            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{date.month.__str__().zfill(2)}11', format='%Y%m%d'))
+        D10_range = pd.date_range(date,
+                                  pd.to_datetime(f'{date.year}{date.month.__str__().zfill(2)}11', format='%Y%m%d'))
     elif date.day == 11:
-            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{date.month.__str__().zfill(2)}21', format='%Y%m%d'))
+        D10_range = pd.date_range(date,
+                                  pd.to_datetime(f'{date.year}{date.month.__str__().zfill(2)}21', format='%Y%m%d'))
     else:
-         if date.month != 12:
-            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year}{str(date.month+1).zfill(2)}01', format='%Y%m%d'))
-         else:
-            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year+1}0101', format='%Y%m%d'))
+        if date.month != 12:
+            D10_range = pd.date_range(date,
+                                      pd.to_datetime(f'{date.year}{str(date.month + 1).zfill(2)}01', format='%Y%m%d'))
+        else:
+            D10_range = pd.date_range(date, pd.to_datetime(f'{date.year + 1}0101', format='%Y%m%d'))
 
     tiles_path = []
     for D in D10_range[:-1]:
@@ -411,27 +409,27 @@ def filler(date, tile, s):
         for p in paths:
             tiles_path.append(ds_opener(p))
 
-    D10_ds = xr.concat(tiles_path, dim='time')
+    D10_ds = xr.concat(tiles_path, dim='time', join='override')
 
     meanRed = xr.apply_ufunc(_bands_composite, D10_ds['Oa07_toc'], D10_ds['Oa08_toc'], D10_ds['Oa09_toc'],
                              D10_ds['Oa10_toc'], join='inner', ).rename('mRed')
     meanNIR = xr.apply_ufunc(_bands_composite, D10_ds['Oa16_toc'], D10_ds['Oa17_toc'], D10_ds['Oa18_toc'],
-                             join='inner',).rename('mNIR')
+                             join='inner', ).rename('mNIR')
     meanSWIR = xr.apply_ufunc(_bands_composite, D10_ds['S5_an_toc'],
                               join='inner', ).rename('mSWIR')
 
-    del(D10_ds)
+    del (D10_ds)
 
     NDVI = _ndvi(meanNIR, meanRed)
-
-    argmax = NDVI.argmax('time', skipna=True)
+    mask = np.isnan(NDVI).all(axis=0)
+    argmax = NDVI.where(~mask, -999).argmax('time', skipna=True)
     max_NDVI = NDVI.max('time', skipna=True)
 
     max_Red = meanRed.isel({'time': argmax})
     max_NIR = meanNIR.isel({'time': argmax})
     max_SWIR = meanSWIR.isel({'time': argmax})
 
-    del(meanRed, meanNIR, meanSWIR)
+    del (meanRed, meanNIR, meanSWIR)
 
     max_Red = max_Red.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
     max_NIR = max_NIR.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
@@ -440,10 +438,16 @@ def filler(date, tile, s):
     SWIR_rescaled = _rescale(max_SWIR, -0.01, 1.6, 0, 255)
     NIR_rescaled = _rescale(max_NIR, -0.01, 1.6, 0, 255)
     RED_rescaled = _rescale(max_Red, -0.01, 1.6, 0, 255)
+    del (max_Red, max_NIR, max_SWIR)
 
-    rgb = xr.concat([SWIR_rescaled, NIR_rescaled, RED_rescaled], dim='time')
+    SWIR_masked = SWIR_rescaled.where(~np.isnan(SWIR_rescaled), 0)
+    NIR_masked = NIR_rescaled.where(~np.isnan(NIR_rescaled), 0)
+    RED_masked = RED_rescaled.where(~np.isnan(RED_rescaled), 0)
+    del(SWIR_rescaled, NIR_rescaled, RED_rescaled)
 
-    del(max_Red, max_NIR, max_SWIR, SWIR_rescaled, NIR_rescaled, RED_rescaled)
+    rgb = xr.concat([SWIR_masked, NIR_masked, RED_masked], dim='time')
+
+    del (SWIR_masked, NIR_masked, RED_masked)
 
     rgb = rgb.rename('RGB') \
         .rename({'time': 'band'}) \
@@ -454,10 +458,10 @@ def filler(date, tile, s):
                          output_core_dims=[['HSV']],
                          keep_attrs=False,
                          )
-    del(rgb, )
+    del (rgb,)
 
-    h = out[:, :, 0].rename('H').squeeze()
-
+    h = out[:, :, 0].squeeze().rename('H')
+    h = h.where(~mask, np.nan)
     # greenness
     gvi = xr.apply_ufunc(_gvi, max_NDVI, h,
                          input_core_dims=[['lon', 'lat'], ['lon', 'lat']],
@@ -465,11 +469,11 @@ def filler(date, tile, s):
 
     gvi = gvi.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0).to_dataset(name='GVI')
     gvi = gvi.transpose('time', 'lat', 'lon')
-    print(gvi)
-
+    del (max_NDVI, h,)
     zarr_update(gvi, tile, s.archive_path, s.AOI_TL_x, s.AOI_TL_y, s.AOI_BR_x, s.AOI_BR_y)
 
     return
+
 
 def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
     tile_x = int(tile[1:3])
@@ -478,10 +482,10 @@ def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
     x = tile_x - AOI_TL_x
     y = tile_y - AOI_TL_y
 
-    xi_min = x * 3360       # todo adapt to tile size
+    xi_min = x * 3360  # todo adapt to tile size
     xi_max = xi_min + 3360  # todo adapt to tile size
 
-    yi_min = y * 3360       # todo adapt to tile size
+    yi_min = y * 3360  # todo adapt to tile size
     yi_max = yi_min + 3360  # todo adapt to tile size
 
     container_DS = xr.open_zarr(container, consolidated=True)
@@ -491,13 +495,12 @@ def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
 
     with xr.open_zarr(container, consolidated=True) as container_DS:
         pos = np.where(container_DS.time == gvi.time[0])[0].item()
-        if pos == container_DS.time.size-1:
+        if pos == container_DS.time.size - 1:
             time_region = slice(pos, None, 1)
         else:
-            time_region = slice(pos, pos+1, 1)
+            time_region = slice(pos, pos + 1, 1)
 
-    gvi.to_zarr(container,  compute=True, region={'time': time_region, 'lat': lat_region, 'lon': lon_region},)
-
+    gvi.to_zarr(container, compute=True, region={'time': time_region, 'lat': lat_region, 'lon': lon_region}, )
 
 
 if __name__ == '__main__':
@@ -550,14 +553,15 @@ if __name__ == '__main__':
     password = args.password
     root_path = f'/data/cgl_vol2/SEN3-TOC/'
 
-    s = Settings(AOI, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name, archive_path, archive_flush,
-                 server, port, user, password, root_path, )
+    s = ProcessSettings(AOI, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name, archive_path,
+                        archive_flush,
+                        server, port, user, password, root_path, )
 
     # Archive creator/updater
     if os.path.isdir(s.archive_path) and not s.flush:
-        s.D10_required = archive_append(s.archive_path, s.dek_range)
+        s.D10_required = archive_append(s.archive_path, s.D10_range)
     else:
-        s.D10_required = archive_creator(s.archive_path, s.dek_range, s.lat_n, s.lon_n, s.minx, s.maxx, s.maxy, s.miny)
+        s.D10_required = archive_creator(s.archive_path, s.D10_range, s.lat_n, s.lon_n, s.minx, s.maxx, s.maxy, s.miny)
 
     # Data retreat
     if not s.D10_required.empty:
@@ -566,7 +570,7 @@ if __name__ == '__main__':
         except (OSError, asyncssh.Error) as exc:
             sys.exit('SFTP operation failed: ' + str(exc))
     else:
-        #TODO adapted and check
+        # TODO adapted and check
         pass
 
     if env == 'Windows':
@@ -574,13 +578,14 @@ if __name__ == '__main__':
         client = Client(cluster)
         client.wait_for_workers(workers)
     elif env == 'Linux' and HPC is False:
-        cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1, **{'local_directory': '/localdata'})
+        cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1,
+                               **{'local_directory': '/localdata'})
         client = Client(cluster)
         client.wait_for_workers(workers)
     else:
         cluster.scale(workers)
         client = Client(cluster)
-        client.wait_for_workers((workers * 4)/64)
+        client.wait_for_workers((workers * 4) / 64)
 
     if not s.D10_required.empty:
         tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
@@ -600,7 +605,6 @@ if __name__ == '__main__':
     gvdm = gvdm.rio.write_crs("EPSG:4326")
     gvdm = gvdm.rename({'lat': 'y', 'lon': 'x'})
 
-    # gvdm = gvdm.rio.reproject("EPSG:4326", nodata=-999, resampling=0)
     gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
     gvdm_nodata = gvdm_nan.rio.set_nodata(-999)
     gvdm_f = gvdm_nodata.astype(np.int16)
@@ -608,4 +612,3 @@ if __name__ == '__main__':
     gvdm.rio.to_raster(s.results_path, **{'compress': 'lzw'})
 
     print('done')
-
