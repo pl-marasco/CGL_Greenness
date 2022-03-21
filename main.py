@@ -23,7 +23,7 @@ np.seterr(all='ignore')
 
 class ProcessSettings:
 
-    def __init__(s, AOI, pxl_sz, grid_path, s_date, time_delta,
+    def __init__(s, AOI, bando, pxl_sz, grid_path, s_date, time_delta,
                  local_folder, out_path, out_name, archive_path, flush,
                  server, port, user, password, root_path):
 
@@ -44,7 +44,7 @@ class ProcessSettings:
         s.AOI_BR_str = s.__tile(AOI[2], AOI[3])
         s.x_range = s.__range(AOI[0], AOI[2])
         s.y_range = s.__range(AOI[1], AOI[3])
-        s.tile_list = s.__tile_list(s.x_range, s.y_range)
+        s.tile_list = s.__tile_list(s.x_range, s.y_range, bando)
         s.grid = s._grid_creator(-180., -65., +180., +85., (1 / 336), 3360, 3360)
 
         s.minx = s.grid[s.AOI_TL_str].bounds[0]
@@ -106,14 +106,19 @@ class ProcessSettings:
     def __date_range(self, start, end):
         return pd.date_range(end, start, freq='D', inclusive='both')
 
-    def __tile_list(self, x_range, y_range):
+    def __tile_list(self, x_range, y_range, bando):
         tile_list = []
         for i, v in enumerate(y_range):
             v = [v] * len(x_range)
 
             tile_list.append(list(map(lambda j: fr'X{str(j[1]).zfill(2)}Y{str(j[0]).zfill(2)}', zip(v, x_range))))
 
-        return sum(tile_list, [])
+        full = sum(tile_list, [])
+
+        if bando:
+            [full.remove(i) for i in bando if i in full]
+
+        return full
 
     def __D10_range_create(self, date_range):
         return date_range[date_range.day.isin([1, 11, 21])]
@@ -514,7 +519,19 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     x_TL_AOI, y_TL_AOI = 20, 5
-    x_BR_AOI, y_BR_AOI = 23, 8
+    x_BR_AOI, y_BR_AOI = 21, 6
+
+    bando = []
+
+    # x_TL_AOI, y_TL_AOI = 16, 4
+    # x_BR_AOI, y_BR_AOI = 26, 8
+
+    # bando = ['X16Y04',
+    #          'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
+    #          'X24Y07',
+    #          'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
+    #          'X16Y08', 'X17Y08', 'X18Y08', 'X19Y08', 'X20Y08']
+
     AOI = [x_TL_AOI, y_TL_AOI, x_BR_AOI, y_BR_AOI]
     pxl_sx = 1 / 336.
 
@@ -551,7 +568,7 @@ if __name__ == '__main__':
     password = args.password
     root_path = f'/data/cgl_vol2/SEN3-TOC/'
 
-    s = ProcessSettings(AOI, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name, archive_path,
+    s = ProcessSettings(AOI, bando, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name, archive_path,
                         archive_flush,
                         server, port, user, password, root_path, )
 
