@@ -506,7 +506,7 @@ def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
 if __name__ == '__main__':
 
     env = platform.system()
-    HPC = False
+    HPC = True
 
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('-u', '--user', help='User', type=str)
@@ -514,7 +514,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     x_TL_AOI, y_TL_AOI = 20, 5
-    x_BR_AOI, y_BR_AOI = 21, 6
+    x_BR_AOI, y_BR_AOI = 23, 8
     AOI = [x_TL_AOI, y_TL_AOI, x_BR_AOI, y_BR_AOI]
     pxl_sx = 1 / 336.
 
@@ -529,17 +529,15 @@ if __name__ == '__main__':
         workers = 4
     else:
         local_folder = r'/BGFS/COMMON/maraspi/S3'
-        cluster = PBSCluster(cores=32,
-                             processes=7,
-                             threads_per_worker=1,
-                             # memory="240GB",
+        cluster = PBSCluster(cores=1,
+                             memory="64GB",
                              project='DASK_Parabellum',
                              queue='high',
                              # local_directory='/local0/maraspi/',
                              walltime='12:00:00',
                              # death_timeout=240,
                              log_directory='/tmp/marapi/workers/')
-        workers = 2
+        workers = 56
 
     archive_path = os.path.join(local_folder, 'archive.zarr')
     grid_path = os.path.join(local_folder, 'grid.geojson')
@@ -585,7 +583,7 @@ if __name__ == '__main__':
     else:
         cluster.scale(workers)
         client = Client(cluster)
-        client.wait_for_workers((workers * 4) / 64)
+        client.wait_for_workers(7)
 
     if not s.D10_required.empty:
         tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
@@ -609,6 +607,6 @@ if __name__ == '__main__':
     gvdm_nodata = gvdm_nan.rio.set_nodata(-999)
     gvdm_f = gvdm_nodata.astype(np.int16)
 
-    gvdm.rio.to_raster(s.results_path, **{'compress': 'lzw'})
+    gvdm_f.rio.to_raster(s.results_path, **{'compress': 'lzw'})
 
     print('done')
