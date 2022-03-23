@@ -288,41 +288,44 @@ async def download_list(D10_list, tile_range):
 
 def ds_opener(band_path):
     ds = xr.open_dataset(band_path)
-    ds = ds.drop(['Oa02_toc', 'Oa02_toc_error',
-                  'Oa03_toc', 'Oa03_toc_error',
-                  'Oa04_toc', 'Oa04_toc_error',
-                  'Oa05_toc', 'Oa05_toc_error',
-                  'Oa06_toc', 'Oa06_toc_error',
-                  'Oa11_toc', 'Oa11_toc_error',
-                  'Oa12_toc', 'Oa12_toc_error',
-                  'Oa21_toc', 'Oa21_toc_error',
-                  'S1_an_toc', 'S1_an_toc_error',
-                  'S2_an_toc', 'S2_an_toc_error',
-                  'S3_an_toc', 'S3_an_toc_error',
-                  'S6_an_toc', 'S6_an_toc_error',
-                  'Oa07_toc_error',
-                  'Oa08_toc_error',
-                  'Oa09_toc_error',
-                  'Oa10_toc_error',
-                  'Oa16_toc_error',
-                  'Oa17_toc_error',
-                  'Oa18_toc_error',
-                  'S5_an_toc_error',
-                  'SAA_olci',
-                  'SZA_olci',
-                  'VAA_olci',
-                  'VZA_olci',
-                  'SAA_slstr',
-                  'SZA_slstr',
-                  'VAA_slstr',
-                  'VZA_slstr',
-                  'cloud_an',
-                  'quality_flags',
-                  'pixel_classif_flags',
-                  'AC_process_flag'
-                  ])
-    time = pd.to_datetime(ds.attrs['time_coverage_start'])
 
+    Q_mask = ds.pixel_classif_flags == 1024
+
+    ds = ds.drop_vars(['Oa02_toc', 'Oa02_toc_error',
+                       'Oa03_toc', 'Oa03_toc_error',
+                       'Oa04_toc', 'Oa04_toc_error',
+                       'Oa05_toc', 'Oa05_toc_error',
+                       'Oa06_toc', 'Oa06_toc_error',
+                       'Oa11_toc', 'Oa11_toc_error',
+                       'Oa12_toc', 'Oa12_toc_error',
+                       'Oa21_toc', 'Oa21_toc_error',
+                       'S1_an_toc', 'S1_an_toc_error',
+                       'S2_an_toc', 'S2_an_toc_error',
+                       'S3_an_toc', 'S3_an_toc_error',
+                       'S6_an_toc', 'S6_an_toc_error',
+                       'Oa07_toc_error',
+                       'Oa08_toc_error',
+                       'Oa09_toc_error',
+                       'Oa10_toc_error',
+                       'Oa16_toc_error',
+                       'Oa17_toc_error',
+                       'Oa18_toc_error',
+                       'S5_an_toc_error',
+                       'SAA_olci',
+                       'SZA_olci',
+                       'VAA_olci',
+                       'VZA_olci',
+                       'SAA_slstr',
+                       'SZA_slstr',
+                       'VAA_slstr',
+                       'VZA_slstr',
+                       'cloud_an',
+                       'quality_flags',
+                       'pixel_classif_flags',
+                       'AC_process_flag'
+                       ])
+    ds = ds.where(Q_mask, np.NAN)
+    time = pd.to_datetime(ds.attrs['time_coverage_start'])
     if not hasattr(ds, 'time'):
         ds = ds.assign_coords({'time': time})
         ds = ds.expand_dims(dim='time', axis=0)
@@ -367,6 +370,7 @@ def H(array):
 def _gvi(ndvi, h):
     null_mask = np.logical_or(np.isnan(ndvi), np.isnan(h))
 
+    # this can be substitute with eval(equation)
     vegetated = np.where((h >= (-2354.83 * ndvi) + 522.68), 1, 0)
     semiveg = np.where(
         (h > (-2139.54 * ndvi) + 377.63) & (h < (57.22 * ndvi) + 141.42) & (h < (-2354.83 * ndvi) + 522.68) & (
@@ -518,19 +522,19 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--password', help='password', type=str)
     args = parser.parse_args()
 
-    x_TL_AOI, y_TL_AOI = 20, 5
-    x_BR_AOI, y_BR_AOI = 21, 6
+    # x_TL_AOI, y_TL_AOI = 20, 5
+    # x_BR_AOI, y_BR_AOI = 21, 6
+    #
+    # bando = []
 
-    bando = []
+    x_TL_AOI, y_TL_AOI = 16, 4
+    x_BR_AOI, y_BR_AOI = 26, 8
 
-    # x_TL_AOI, y_TL_AOI = 16, 4
-    # x_BR_AOI, y_BR_AOI = 26, 8
-
-    # bando = ['X16Y04',
-    #          'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
-    #          'X24Y07',
-    #          'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
-    #          'X16Y08', 'X17Y08', 'X18Y08', 'X19Y08', 'X20Y08']
+    bando = ['X16Y04',
+             'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
+             'X24Y07',
+             'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
+             'X16Y08', 'X17Y08', 'X18Y08', 'X19Y08', 'X20Y08']
 
     AOI = [x_TL_AOI, y_TL_AOI, x_BR_AOI, y_BR_AOI]
     pxl_sx = 1 / 336.
