@@ -432,8 +432,8 @@ def filler(date, tile, s):
     NDVI = _ndvi(meanNIR, meanRed)
     mask = np.isnan(NDVI).all(axis=0)
     argmax = NDVI.where(~mask, -999).argmax('time', skipna=True)
-    max_NDVI = NDVI.max('time', skipna=True)
 
+    max_NDVI = NDVI.isel({'time': argmax})
     max_Red = meanRed.isel({'time': argmax})
     max_NIR = meanNIR.isel({'time': argmax})
     max_SWIR = meanSWIR.isel({'time': argmax})
@@ -625,8 +625,8 @@ if __name__ == '__main__':
     gvdm = gvdm.rename({'lat': 'y', 'lon': 'x'})
 
     gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
-    gvdm_nodata = gvdm_nan.rio.set_nodata(-999)
-    gvdm_f = gvdm_nodata.astype(np.int16)
+    gvdm_nan.rio.set_nodata(-999, inplace=True)
+    gvdm_f = gvdm_nan.astype(np.int16)
 
     gvdm_f.rio.to_raster(s.results_path, **{'compress': 'lzw'})
 
