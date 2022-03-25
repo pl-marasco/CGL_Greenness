@@ -3,7 +3,6 @@ import asyncio, asyncssh
 import sys, os
 import glob
 
-import numba
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -339,11 +338,91 @@ def _bands_composite(*bands):
     return np.nanmean(bands, axis=0)
 
 
+@jit(cache=True, nopython=True)
 def _rescale(in_array, input_low, input_high, out_low=0, out_high=1):
-    if type(out_low) is int and type(out_high) is int:
-        return (((in_array - input_low) / (input_high - input_low)) * (out_high - out_low) + out_low).astype(int)
-    else:
-        return ((in_array - input_low) / (input_high - input_low)) * (out_high - out_low) + out_low
+    return ((in_array - input_low)/(input_high-input_low))*(out_high-out_low)+out_low
+
+
+@jit(cache=True, nopython=True)
+def _nan_to_zero(array):
+    return np.where(np.isnan(array), 0, array)
+
+
+@jit(cache=True, nopython=True)
+def _rgb2hsvcpu(R, G, B):
+    """
+    RGB to HSV
+    Convert RGB values to HSV taking into account negative values
+    Adapted from https://stackoverflow.com/questions/39118528/rgb-to-hsl-conversion
+
+    :param
+    R_ : float
+      red channel
+    G_ : float
+      green channel
+    B_ : float
+      blue channel
+    scale: float, optional
+
+    :returns
+    H, S, V : float
+
+    """
+    H = np.zeros(R.shape, dtype=np.float64)
+    S = np.zeros(R.shape, dtype=np.float64)
+    V = np.zeros(R.shape, dtype=np.float64)
+
+    rows, cols = R.shape
+    for y in range(0, rows):
+        for x in range(0, cols):
+            h, s, v = 0, 0, 0
+
+            R_ = R[y, x]
+            G_ = G[y, x]
+            B_ = B[y, x]
+
+            if np.isnan(R_ * B_ * B_):
+                H[y, x] = np.NAN
+                S[y, x] = np.NAN
+                V[y, x] = np.NAN
+                continue
+
+            Cmax = max(R_, G_, B_)
+            Cmin = min(R_, G_, B_)
+            croma = Cmax - Cmin
+
+            if croma == 0:
+                H[y, x] = np.NAN
+                S[y, x] = np.NAN
+                V[y, x] = np.NAN
+                continue
+
+            if Cmax == R_:
+                segment = (G_ - B_) / croma
+                shift = 0 / 60
+                if segment < 0:
+                    shift = 360 / 60
+                h = segment + shift
+
+            if Cmax == G_:
+                 segment = (B_ - R_) / croma
+                 shift   = 120 / 60
+                 h = segment + shift
+
+            if Cmax == B_:
+                segment = (R_ - G_) / croma
+                shift   = 240 / 60
+                h = segment + shift
+
+            h *= 60.
+            v = Cmax
+            s = croma/v
+
+            H[y, x] = h
+            S[y, x] = s*100.
+            V[y, x] = v*100.
+
+    return H, S, V
 
 
 def _evi(NIR, Red, Blue):
@@ -367,6 +446,7 @@ def H(array):
     return rgb2hsv(array)
 
 
+@jit(cache=True, nopython=True)
 def _gvi(ndvi, h):
     null_mask = np.logical_or(np.isnan(ndvi), np.isnan(h))
 
@@ -427,7 +507,8 @@ def filler(date, tile, s):
     meanSWIR = xr.apply_ufunc(_bands_composite, D10_ds['S5_an_toc'],
                               join='inner', ).rename('mSWIR')
 
-    del (D10_ds)
+    nominal_coords = {'time': [D10_ds.time[0].values.astype('datetime64[D]')], 'lat': D10_ds.lat, 'lon': D10_ds.lon, }
+    del D10_ds
 
     NDVI = _ndvi(meanNIR, meanRed)
     mask = np.isnan(NDVI).all(axis=0)
@@ -440,46 +521,23 @@ def filler(date, tile, s):
 
     del (meanRed, meanNIR, meanSWIR)
 
-    max_Red = max_Red.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
-    max_NIR = max_NIR.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
-    max_SWIR = max_SWIR.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0)
-
-    SWIR_rescaled = _rescale(max_SWIR, -0.01, 1.6, 0, 255)
-    NIR_rescaled = _rescale(max_NIR, -0.01, 1.6, 0, 255)
-    RED_rescaled = _rescale(max_Red, -0.01, 1.6, 0, 255)
+    SWIR_rescaled = _rescale(max_SWIR.to_numpy(), -0.01, 1.6, 0, 255)
+    NIR_rescaled = _rescale(max_NIR.to_numpy(), -0.01, 1.6, 0, 255)
+    RED_rescaled = _rescale(max_Red.to_numpy(), -0.01, 1.6, 0, 255)
     del (max_Red, max_NIR, max_SWIR)
 
-    SWIR_masked = SWIR_rescaled.where(~np.isnan(SWIR_rescaled), 0)
-    NIR_masked = NIR_rescaled.where(~np.isnan(NIR_rescaled), 0)
-    RED_masked = RED_rescaled.where(~np.isnan(RED_rescaled), 0)
-    del(SWIR_rescaled, NIR_rescaled, RED_rescaled)
+    h, _, _ = _rgb2hsvcpu(RED_rescaled, NIR_rescaled, SWIR_rescaled)
 
-    rgb = xr.concat([SWIR_masked, NIR_masked, RED_masked], dim='time')
+    h = np.where(mask, np.nan, h)
 
-    del (SWIR_masked, NIR_masked, RED_masked)
-
-    rgb = rgb.rename('RGB') \
-        .rename({'time': 'band'}) \
-        .assign_coords({'band': [1, 2, 3]})
-
-    out = xr.apply_ufunc(rgb2hsv, rgb,
-                         input_core_dims=[['band']],
-                         output_core_dims=[['HSV']],
-                         keep_attrs=False,
-                         )
-    del (rgb,)
-
-    h = out[:, :, 0].squeeze().rename('H')
-    h = h.where(~mask, np.nan)
     # greenness
-    gvi = xr.apply_ufunc(_gvi, max_NDVI, h,
-                         input_core_dims=[['lon', 'lat'], ['lon', 'lat']],
-                         output_core_dims=[['lon', 'lat']])
+    gvi = _gvi(max_NDVI.to_numpy(), h)
 
-    gvi = gvi.assign_coords({'time': D10_range[0]}).expand_dims(dim='time', axis=0).to_dataset(name='GVI')
-    gvi = gvi.transpose('time', 'lat', 'lon')
+    gvi_time = np.expand_dims(gvi, 0)
+    gvi_DS = xr.DataArray(gvi_time, coords=nominal_coords, name='GVI').to_dataset()
+
     del (max_NDVI, h,)
-    zarr_update(gvi, tile, s.archive_path, s.AOI_TL_x, s.AOI_TL_y, s.AOI_BR_x, s.AOI_BR_y)
+    zarr_update(gvi_DS, tile, s.archive_path, s.AOI_TL_x, s.AOI_TL_y, s.AOI_BR_x, s.AOI_BR_y)
 
     return
 
@@ -522,19 +580,19 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--password', help='password', type=str)
     args = parser.parse_args()
 
-    # x_TL_AOI, y_TL_AOI = 20, 5
-    # x_BR_AOI, y_BR_AOI = 21, 6
-    #
-    # bando = []
+    x_TL_AOI, y_TL_AOI = 20, 5
+    x_BR_AOI, y_BR_AOI = 21, 6
 
-    x_TL_AOI, y_TL_AOI = 16, 4
-    x_BR_AOI, y_BR_AOI = 26, 8
+    bando = []
 
-    bando = ['X16Y04',
-             'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
-             'X24Y07',
-             'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
-             'X16Y08', 'X17Y08', 'X18Y08', 'X19Y08', 'X20Y08']
+    # x_TL_AOI, y_TL_AOI = 16, 4
+    # x_BR_AOI, y_BR_AOI = 26, 8
+
+    # bando = ['X16Y04',
+    #          'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
+    #          'X24Y07',
+    #          'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
+    #          'X16Y08', 'X17Y08', 'X18Y08', 'X19Y08', 'X20Y08']
 
     AOI = [x_TL_AOI, y_TL_AOI, x_BR_AOI, y_BR_AOI]
     pxl_sx = 1 / 336.
@@ -609,6 +667,12 @@ if __name__ == '__main__':
     if not s.D10_required.empty:
         tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
         dask.compute(tiles_update)
+
+
+        # for tile in s.tile_list:
+        #     for obs_date in s.D10_required.values:
+        #         filler(obs_date, tile, s)
+
 
     gvi = xr.open_zarr(s.archive_path, consolidated=True).GVI[-6:, :, :]
 
