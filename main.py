@@ -2,6 +2,7 @@ import datetime
 import asyncio, asyncssh
 import sys, os
 import glob
+import gc
 
 import numpy as np
 import pandas as pd
@@ -508,7 +509,7 @@ def filler(date, tile, s):
                               join='inner', ).rename('mSWIR')
 
     nominal_coords = {'time': [D10_ds.time[0].values.astype('datetime64[D]')], 'lat': D10_ds.lat, 'lon': D10_ds.lon, }
-    del D10_ds
+    del D10_ds; gc.collect()
 
     NDVI = _ndvi(meanNIR, meanRed)
     mask = np.isnan(NDVI).all(axis=0)
@@ -519,7 +520,7 @@ def filler(date, tile, s):
     max_NIR = meanNIR.isel({'time': argmax})
     max_SWIR = meanSWIR.isel({'time': argmax})
 
-    del (meanRed, meanNIR, meanSWIR)
+    del (argmax, meanRed, meanNIR, meanSWIR); gc.collect()
 
     SWIR_rescaled = _rescale(max_SWIR.to_numpy(), -0.01, 1.6, 0, 255)
     NIR_rescaled = _rescale(max_NIR.to_numpy(), -0.01, 1.6, 0, 255)
@@ -527,13 +528,13 @@ def filler(date, tile, s):
     del (max_Red, max_NIR, max_SWIR)
 
     h, _, _ = _rgb2hsvcpu(RED_rescaled, NIR_rescaled, SWIR_rescaled)
-    del (SWIR_rescaled, NIR_rescaled, RED_rescaled, _)
+    del (SWIR_rescaled, NIR_rescaled, RED_rescaled, _); gc.collect()
 
     h = np.where(mask, np.nan, h)
 
     # greenness
     gvi = _gvi(max_NDVI.to_numpy(), h)
-    del (max_NDVI, h,)
+    del (max_NDVI, h,);
 
     gvi_time = np.expand_dims(gvi, 0)
     gvi_DS = xr.DataArray(gvi_time, coords=nominal_coords, name='GVI').to_dataset()
