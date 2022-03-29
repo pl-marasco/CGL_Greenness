@@ -617,6 +617,7 @@ if __name__ == '__main__':
                              walltime='12:00:00',
                              # death_timeout=240,
                              log_directory='/tmp/maraspi/workers/')
+        workers = 56
 
     archive_path = os.path.join(local_folder, 'archive.zarr')
     grid_path = os.path.join(local_folder, 'grid.geojson')
