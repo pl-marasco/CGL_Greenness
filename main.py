@@ -527,16 +527,17 @@ def filler(date, tile, s):
     del (max_Red, max_NIR, max_SWIR)
 
     h, _, _ = _rgb2hsvcpu(RED_rescaled, NIR_rescaled, SWIR_rescaled)
+    del (SWIR_rescaled, NIR_rescaled, RED_rescaled, _)
 
     h = np.where(mask, np.nan, h)
 
     # greenness
     gvi = _gvi(max_NDVI.to_numpy(), h)
+    del (max_NDVI, h,)
 
     gvi_time = np.expand_dims(gvi, 0)
     gvi_DS = xr.DataArray(gvi_time, coords=nominal_coords, name='GVI').to_dataset()
 
-    del (max_NDVI, h,)
     zarr_update(gvi_DS, tile, s.archive_path, s.AOI_TL_x, s.AOI_TL_y, s.AOI_BR_x, s.AOI_BR_y)
 
     return
@@ -612,11 +613,10 @@ if __name__ == '__main__':
                              memory="64GB",
                              project='DASK_Parabellum',
                              queue='high',
-                             # local_directory='/local0/maraspi/',
+                             local_directory='/local0/maraspi/',
                              walltime='12:00:00',
                              # death_timeout=240,
-                             log_directory='/tmp/marapi/workers/')
-        workers = 56
+                             log_directory='/tmp/maraspi/workers/')
 
     archive_path = os.path.join(local_folder, 'archive.zarr')
     grid_path = os.path.join(local_folder, 'grid.geojson')
