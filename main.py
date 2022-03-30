@@ -624,7 +624,7 @@ if __name__ == '__main__':
     grid_path = os.path.join(local_folder, 'grid.geojson')
     out_path = os.path.join(local_folder, 'results')
     out_name = 'MVP_S3_300'
-    archive_flush = True
+    archive_flush = False
 
     server = 'uservm.vito.be'
     port = 24033
@@ -670,12 +670,6 @@ if __name__ == '__main__':
         tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
         dask.compute(tiles_update)
 
-
-        # for tile in s.tile_list:
-        #     for obs_date in s.D10_required.values:
-        #         filler(obs_date, tile, s)
-
-
     gvi = xr.open_zarr(s.archive_path, consolidated=True).GVI[-6:, :, :]
 
     gvdm = xr.apply_ufunc(_decades, gvi,
@@ -686,14 +680,18 @@ if __name__ == '__main__':
                           vectorize=True, )
 
     gvdm.name = 'greenness'
-
     gvdm = gvdm.rio.write_crs("EPSG:4326")
     gvdm = gvdm.rename({'lat': 'y', 'lon': 'x'})
 
     gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
     gvdm_nan.rio.set_nodata(-999, inplace=True)
-    gvdm_f = gvdm_nan.astype(np.int16)
 
-    gvdm_f.rio.to_raster(s.results_path, **{'compress': 'lzw'})
+    gvdm_nan.rio.to_raster(s.results_path, **{'compress': 'lzw',
+                                              'interleave': 'band',
+                                              'zlevel': 7,
+                                              'profile': 'GeoTiff',
+                                              'GEOTIFF_VERSION': 1.0,
+                                              'bigtiff': 'if_needed'
+                                              })
 
     print('done')
