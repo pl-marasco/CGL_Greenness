@@ -635,12 +635,14 @@ if __name__ == '__main__':
     s = ProcessSettings(AOI, bando, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name, archive_path,
                         archive_flush,
                         server, port, user, password, root_path, )
+    print('Prepare settings\r')
 
     # Archive creator/updater
     if os.path.isdir(s.archive_path) and not s.flush:
         s.D10_required = archive_append(s.archive_path, s.D10_range)
     else:
         s.D10_required = archive_creator(s.archive_path, s.D10_range, s.lat_n, s.lon_n, s.minx, s.maxx, s.maxy, s.miny)
+    print('Archive ready\r')
 
     # Data retreat
     if not s.D10_required.empty:
@@ -651,6 +653,8 @@ if __name__ == '__main__':
     else:
         # TODO adapted and check
         pass
+
+    print('Local data downloaded\r')
 
     if env == 'Windows':
         cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1)
@@ -666,10 +670,14 @@ if __name__ == '__main__':
         client = Client(cluster)
         client.wait_for_workers(7)
 
+    print('Cluster up and running\r')
+
     if not s.D10_required.empty:
         tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
         dask.compute(tiles_update)
+        print('Archive updated\r')
 
+    print('computing GVI')
     gvi = xr.open_zarr(s.archive_path, consolidated=True).GVI[-6:, :, :]
 
     gvdm = xr.apply_ufunc(_decades, gvi,
@@ -686,6 +694,7 @@ if __name__ == '__main__':
     gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
     gvdm_nan.rio.set_nodata(-999, inplace=True)
 
+    print('Writing output')
     gvdm_nan.rio.to_raster(s.results_path, **{'compress': 'lzw',
                                               'interleave': 'band',
                                               'zlevel': 7,
