@@ -263,9 +263,9 @@ async def lifter(s):
 
     for i, result in enumerate(results, 1):
         if isinstance(result, Exception):
-            print('Task %d failed: %s' % (i, str(result)))
+            print('\rTask %d failed: %s' % (i, str(result)))
         else:
-            print('Task %d succeeded:' % i)
+            print('\rTask %d succeeded:' % i)
 
 
 async def download_list(D10_list, tile_range):
@@ -451,11 +451,16 @@ def H(array):
 def _gvi(ndvi, h):
     null_mask = np.logical_or(np.isnan(ndvi), np.isnan(h))
 
-    # this can be substitute with eval(equation)
-    vegetated = np.where((h >= (-2354.83 * ndvi) + 522.68), 1, 0)
+    # # this can be substitute with eval(equation)
+    # vegetated = np.where((h >= (-2354.83 * ndvi) + 522.68), 1, 0)
+    # semiveg = np.where(
+    #     (h > (-2139.54 * ndvi) + 377.63) & (h < (57.22 * ndvi) + 141.42) & (h < (-2354.83 * ndvi) + 522.68) & (
+    #             h > (-261.64 * ndvi) + 133.30), 1, 0)
+
+    vegetated = np.where((h >= (-177.25 * ndvi) + 74.97), 1, 0)
     semiveg = np.where(
-        (h > (-2139.54 * ndvi) + 377.63) & (h < (57.22 * ndvi) + 141.42) & (h < (-2354.83 * ndvi) + 522.68) & (
-                h > (-261.64 * ndvi) + 133.30), 1, 0)
+        (h < (-177.25 * ndvi) + 74.97) & (h > (45.61 * ndvi) + 21.48) & (h > (-287.5 * ndvi) + 58.125) & (
+                h < (314 * ndvi) + 16.02), 1, 0)
 
     gvi = np.logical_or(vegetated, semiveg)
 
@@ -635,14 +640,14 @@ if __name__ == '__main__':
     s = ProcessSettings(AOI, bando, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name, archive_path,
                         archive_flush,
                         server, port, user, password, root_path, )
-    print('Prepare settings\r')
+    print('\rPrepare settings')
 
     # Archive creator/updater
     if os.path.isdir(s.archive_path) and not s.flush:
         s.D10_required = archive_append(s.archive_path, s.D10_range)
     else:
         s.D10_required = archive_creator(s.archive_path, s.D10_range, s.lat_n, s.lon_n, s.minx, s.maxx, s.maxy, s.miny)
-    print('Archive ready\r')
+    print('\rArchive ready')
 
     # Data retreat
     if not s.D10_required.empty:
@@ -654,7 +659,7 @@ if __name__ == '__main__':
         # TODO adapted and check
         pass
 
-    print('Local data downloaded\r')
+    print('\rLocal data downloaded')
 
     if env == 'Windows':
         cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1)
@@ -670,14 +675,14 @@ if __name__ == '__main__':
         client = Client(cluster)
         client.wait_for_workers(7)
 
-    print('Cluster up and running\r')
+    print('\rCluster up and running')
 
     if not s.D10_required.empty:
         tiles_update = [filler(obs_date, tile, s) for obs_date in s.D10_required.values for tile in s.tile_list]
         dask.compute(tiles_update)
-        print('Archive updated\r')
+        print('\rArchive updated')
 
-    print('computing GVI')
+    print('\rcomputing GVI')
     gvi = xr.open_zarr(s.archive_path, consolidated=True).GVI[-6:, :, :]
 
     gvdm = xr.apply_ufunc(_decades, gvi,
@@ -694,7 +699,7 @@ if __name__ == '__main__':
     gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
     gvdm_nan.rio.set_nodata(-999, inplace=True)
 
-    print('Writing output')
+    print('\rWriting output')
     gvdm_nan.rio.to_raster(s.results_path, **{'compress': 'lzw',
                                               'interleave': 'band',
                                               'zlevel': 7,
@@ -703,4 +708,4 @@ if __name__ == '__main__':
                                               'bigtiff': 'if_needed'
                                               })
 
-    print('done')
+    print('\rdone')
