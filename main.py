@@ -1,21 +1,21 @@
+import argparse
+import asyncio
 import datetime
-import asyncio, asyncssh
-import sys, os
-import glob
 import gc
+import glob
+import os
+import platform
+import sys
+from urllib.parse import urljoin
 
+import asyncssh
+import dask
 import numpy as np
 import pandas as pd
 import xarray as xr
-import dask
-import platform
-import argparse
-
-from numba import jit
-
-from distributed import Client, LocalCluster
 from dask_jobqueue import PBSCluster
-from urllib.parse import urljoin
+from distributed import Client, LocalCluster
+from numba import jit
 from skimage.color import rgb2hsv
 
 np.seterr(all='ignore')
@@ -197,10 +197,12 @@ async def get_files(server, port, user, password, root_path, local_path, queue):
                     if len(dwnl_file_list) != 0:
                         await sftp.get(dwnl_file_list, spef_local_pth, max_requests=128, error_handler=DownloadError,
                                        progress_handler=progress_handler, recurse=True)
-                        print(f'Worker {task_name} got all files for the {sel_date.year}-{sel_date.month.__str__().zfill(2)}-{sel_date.day.__str__().zfill(2)}')
+                        print(
+                            f'Worker {task_name} got all files for the {sel_date.year}-{sel_date.month.__str__().zfill(2)}-{sel_date.day.__str__().zfill(2)}')
                         queue.task_done()
                     else:
-                        print(f'Worker {task_name} verified that all files for {sel_date.year}-{sel_date.month.__str__().zfill(2)}-{sel_date.day.__str__().zfill(2)} are already in house')
+                        print(
+                            f'Worker {task_name} verified that all files for {sel_date.year}-{sel_date.month.__str__().zfill(2)}-{sel_date.day.__str__().zfill(2)} are already in house')
                         queue.task_done()
                 except (asyncssh.Error, OSError) as e:
                     raise e
@@ -236,7 +238,8 @@ def archive_append(archive_path, D10_dates):
         empty_array = dask.array.empty(shape=(time_n, lat.size, lon.size), chunks=(1, 3360, 3360))
         zero_array = dask.array.zeros_like(empty_array)
 
-        gvi = xr.DataArray(data=zero_array, coords={'time': alignment, 'lat': lat.T, 'lon': lon.T}, name='GVI')
+        gvi = xr.DataArray(data=zero_array, coords={'time': alignment, 'lat': lat.T, 'lon': lon.T},
+                           name='GVI').to_dataset()
 
         gvi.to_zarr(archive_path, append_dim='time', consolidated=True)
 
@@ -292,10 +295,10 @@ def ds_opener(band_path):
     Q_mask = ds.pixel_classif_flags == 1024
 
     ds = ds.drop_vars(['Oa02_toc', 'Oa02_toc_error',
-                       'Oa03_toc', 'Oa03_toc_error',
-                       'Oa04_toc', 'Oa04_toc_error',
-                       'Oa05_toc', 'Oa05_toc_error',
-                       'Oa06_toc', 'Oa06_toc_error',
+                       'Oa03_toc_error',
+                       'Oa04_toc_error',
+                       'Oa05_toc_error',
+                       'Oa06_toc_error',
                        'Oa11_toc', 'Oa11_toc_error',
                        'Oa12_toc', 'Oa12_toc_error',
                        'Oa21_toc', 'Oa21_toc_error',
@@ -341,7 +344,7 @@ def _bands_composite(*bands):
 
 @jit(cache=True, nopython=True)
 def _rescale(in_array, input_low, input_high, out_low=0, out_high=1):
-    return ((in_array - input_low)/(input_high-input_low))*(out_high-out_low)+out_low
+    return ((in_array - input_low) / (input_high - input_low)) * (out_high - out_low) + out_low
 
 
 @jit(cache=True, nopython=True)
@@ -369,9 +372,9 @@ def _rgb2hsvcpu(R, G, B):
     H, S, V : float
 
     """
-    H = np.zeros(R.shape, dtype=np.float64)
-    S = np.zeros(R.shape, dtype=np.float64)
-    V = np.zeros(R.shape, dtype=np.float64)
+    H = np.zeros(R.shape, dtype=np.float32)
+    S = np.zeros(R.shape, dtype=np.float32)
+    V = np.zeros(R.shape, dtype=np.float32)
 
     rows, cols = R.shape
     for y in range(0, rows):
@@ -406,22 +409,22 @@ def _rgb2hsvcpu(R, G, B):
                 h = segment + shift
 
             if Cmax == G_:
-                 segment = (B_ - R_) / croma
-                 shift   = 120 / 60
-                 h = segment + shift
+                segment = (B_ - R_) / croma
+                shift = 120 / 60
+                h = segment + shift
 
             if Cmax == B_:
                 segment = (R_ - G_) / croma
-                shift   = 240 / 60
+                shift = 240 / 60
                 h = segment + shift
 
             h *= 60.
             v = Cmax
-            s = croma/v
+            s = croma / v
 
             H[y, x] = h
-            S[y, x] = s*100.
-            V[y, x] = v*100.
+            S[y, x] = s * 100.
+            V[y, x] = v * 100.
 
     return H, S, V
 
@@ -451,16 +454,11 @@ def H(array):
 def _gvi(ndvi, h):
     null_mask = np.logical_or(np.isnan(ndvi), np.isnan(h))
 
-    # # this can be substitute with eval(equation)
-    # vegetated = np.where((h >= (-2354.83 * ndvi) + 522.68), 1, 0)
-    # semiveg = np.where(
-    #     (h > (-2139.54 * ndvi) + 377.63) & (h < (57.22 * ndvi) + 141.42) & (h < (-2354.83 * ndvi) + 522.68) & (
-    #             h > (-261.64 * ndvi) + 133.30), 1, 0)
-
-    vegetated = np.where((h >= (-177.25 * ndvi) + 74.97), 1, 0)
+    # this can be substitute with eval(equation)
+    vegetated = np.where((h >= (-2354.83 * ndvi) + 522.68), 1, 0)
     semiveg = np.where(
-        (h < (-177.25 * ndvi) + 74.97) & (h > (45.61 * ndvi) + 21.48) & (h > (-287.5 * ndvi) + 58.125) & (
-                h < (314 * ndvi) + 16.02), 1, 0)
+        (h > (-2139.54 * ndvi) + 377.63) & (h < (57.22 * ndvi) + 141.42) & (h < (-2354.83 * ndvi) + 522.68) & (
+                h > (-261.64 * ndvi) + 133.30), 1, 0)
 
     gvi = np.logical_or(vegetated, semiveg)
 
@@ -475,6 +473,24 @@ def _decades(data):
         return np.split(data, np.where(np.logical_and(~np.isnan(diff), diff != 0))[0] + 1)[-1].size
     else:
         return -999
+
+
+def _tif_writer(ds, name, n_date):
+    out_path = os.path.join(s.local_folder, 'interm_products', f'ndvi{n_date}')
+    ds.name = name
+    ds = ds.rio.write_crs("EPSG:4326")
+    ds = ds.rename({'lat': 'y', 'lon': 'x'})
+
+    ds_nan = ds.where(~np.isnan(ds), -999).astype(np.int32)
+    ds_nan.rio.set_nodata(-999, inplace=True)
+
+    ds_nan.rio.to_raster(out_path, **{'compress': 'lzw',
+                                      'interleave': 'band',
+                                      'zlevel': 7,
+                                      'profile': 'GeoTiff',
+                                      'GEOTIFF_VERSION': 1.0,
+                                      'bigtiff': 'if_needed'
+                                      })
 
 
 # endregion
@@ -506,40 +522,83 @@ def filler(date, tile, s):
 
     D10_ds = xr.concat(tiles_path, dim='time', join='override')
 
+    meanBlu = xr.apply_ufunc(_bands_composite, D10_ds['Oa03_toc'], D10_ds['Oa04_toc'], join='inner')
+    meanGreen = xr.apply_ufunc(_bands_composite, D10_ds['Oa05_toc'], D10_ds['Oa06_toc'], join='inner')
     meanRed = xr.apply_ufunc(_bands_composite, D10_ds['Oa07_toc'], D10_ds['Oa08_toc'], D10_ds['Oa09_toc'],
-                             D10_ds['Oa10_toc'], join='inner', ).rename('mRed')
+                             D10_ds['Oa10_toc'], join='inner', )
     meanNIR = xr.apply_ufunc(_bands_composite, D10_ds['Oa16_toc'], D10_ds['Oa17_toc'], D10_ds['Oa18_toc'],
-                             join='inner', ).rename('mNIR')
+                             join='inner', )
     meanSWIR = xr.apply_ufunc(_bands_composite, D10_ds['S5_an_toc'],
-                              join='inner', ).rename('mSWIR')
+                              join='inner', )
 
     nominal_coords = {'time': [D10_ds.time[0].values.astype('datetime64[D]')], 'lat': D10_ds.lat, 'lon': D10_ds.lon, }
-    del D10_ds; gc.collect()
+    nominal_date = nominal_coords['time']
+
+    del D10_ds
+    gc.collect()
+
+    EVI = _evi(meanNIR, meanRed, meanBlu)
+    evi_mask = np.isnan(EVI).all(axis=0)
+    evi_argmax = EVI.where(~evi_mask, -999).argmax('time', skipna=True).astype(np.uint8)
+    max_EVI = EVI.isel({'time': evi_argmax}).rename('EVI')
+
+    del (EVI, evi_mask, evi_argmax)
+    gc.collect()
 
     NDVI = _ndvi(meanNIR, meanRed)
     mask = np.isnan(NDVI).all(axis=0)
-    argmax = NDVI.where(~mask, -999).argmax('time', skipna=True)
+    argmax = NDVI.where(~mask, -999).argmax('time', skipna=True).astype(np.uint8)
 
-    max_NDVI = NDVI.isel({'time': argmax})
-    max_Red = meanRed.isel({'time': argmax})
-    max_NIR = meanNIR.isel({'time': argmax})
-    max_SWIR = meanSWIR.isel({'time': argmax})
+    max_NDVI = NDVI.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('NDVI')
+    max_Blu = meanBlu.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('Blu')
+    max_Green = meanGreen.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('Green')
+    max_Red = meanRed.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('Red')
+    max_NIR = meanNIR.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('NIR')
+    max_SWIR = meanSWIR.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('SWIR')
 
-    del (argmax, meanRed, meanNIR, meanSWIR); gc.collect()
+    # _tif_writer(max_NDVI, 'NDVI', nominal_date[0])
 
-    SWIR_rescaled = _rescale(max_SWIR.to_numpy(), -0.01, 1.6, 0, 255)
-    NIR_rescaled = _rescale(max_NIR.to_numpy(), -0.01, 1.6, 0, 255)
-    RED_rescaled = _rescale(max_Red.to_numpy(), -0.01, 1.6, 0, 255)
-    del (max_Red, max_NIR, max_SWIR)
+    del (NDVI, argmax, meanBlu, meanGreen, meanRed, meanNIR, meanSWIR)
+    gc.collect()
+
+    # Blu_rescaled = _rescale(max_Blu.to_numpy(), -0.01, 1.6, 0, 255)
+    # Green_rescaled = _rescale(max_Green.to_numpy(), -0.01, 1.6, 0, 255)
+    SWIR_rescaled = _rescale(max_SWIR[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
+    NIR_rescaled = _rescale(max_NIR[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
+    RED_rescaled = _rescale(max_Red[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
+    del (max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
+    gc.collect()
 
     h, _, _ = _rgb2hsvcpu(RED_rescaled, NIR_rescaled, SWIR_rescaled)
-    del (SWIR_rescaled, NIR_rescaled, RED_rescaled, _); gc.collect()
+    del (SWIR_rescaled, NIR_rescaled, RED_rescaled, _)
+    gc.collect()
 
     h = np.where(mask, np.nan, h)
+    H = xr.DataArray(np.expand_dims(h, 0),
+                     coords={'time': nominal_date, 'lon': max_Red.lon.values, 'lat': max_Red.lat.values},
+                     dims=['band', 'lat', 'lon'])
+    del h
+    gc.collect()
+
+    archive = xr.merge([max_Blu, max_Green, max_Red, max_NIR, max_SWIR, H, max_NDVI, max_EVI])
+    os.makedirs(os.path.join(s.archive_path, nominal_date.__str__().replace('-', '')), exist_ok=True)
+    archive_name = os.path.join(os.path.join(s.archive_path,
+                                             'interm',
+                                             nominal_date.__str__().replace('-', ''),
+                                             f'{tile}.nc'))
+    archive.to_netcdf(archive_name)
+    del (archive, max_EVI, max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
+    gc.collect()
 
     # greenness
-    gvi = _gvi(max_NDVI.to_numpy(), h)
-    del (max_NDVI, h,);
+    gvi = _gvi(max_NDVI[0, :, :].to_numpy(), H[0, :, :].to_numpy())
+    del (max_NDVI, h,)
 
     gvi_time = np.expand_dims(gvi, 0)
     gvi_DS = xr.DataArray(gvi_time, coords=nominal_coords, name='GVI').to_dataset()
@@ -580,39 +639,34 @@ def zarr_update(gvi, tile, container, AOI_TL_x, AOI_TL_y, AOI_BR_x, AOI_BR_y):
 if __name__ == '__main__':
 
     env = platform.system()
-    HPC = True
 
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('-u', '--user', help='User', type=str)
     parser.add_argument('-p', '--password', help='password', type=str)
+    parser.add_argument('--hpc', help='switch for hpc', action=argparse.BooleanOptionalAction)
     args = parser.parse_args()
-
-    x_TL_AOI, y_TL_AOI = 20, 5
-    x_BR_AOI, y_BR_AOI = 21, 6
-
-    bando = []
-
-    # x_TL_AOI, y_TL_AOI = 16, 4
-    # x_BR_AOI, y_BR_AOI = 26, 8
-
-    # bando = ['X16Y04',
-    #          'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
-    #          'X24Y07',
-    #          'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
-    #          'X16Y08', 'X17Y08', 'X18Y08', 'X19Y08', 'X20Y08']
-
-    AOI = [x_TL_AOI, y_TL_AOI, x_BR_AOI, y_BR_AOI]
-    pxl_sx = 1 / 336.
-
-    s_date = datetime.datetime.today()
-    time_delta = 60
 
     if env == 'Windows':
         local_folder = r'e:\tmp\S3'
         workers = 1
-    elif env == 'Linux' and HPC is False:
+
+        x_TL_AOI, y_TL_AOI = 20, 5
+        x_BR_AOI, y_BR_AOI = 21, 6
+
+        bando = []
+    elif env == 'Linux' and args.hpc is False:
         local_folder = '/wad-3/CGL_Greenness'
         workers = 4
+
+        x_TL_AOI, y_TL_AOI = 16, 4
+        x_BR_AOI, y_BR_AOI = 26, 8
+
+        bando = ['X16Y04',
+                 'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
+                 'X24Y07',
+                 'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
+                 'X16Y08', 'X17Y08', 'X18Y08', 'X19Y08', 'X20Y08']
+
     else:
         local_folder = r'/BGFS/COMMON/maraspi/S3'
         cluster = PBSCluster(cores=1,
@@ -624,6 +678,21 @@ if __name__ == '__main__':
                              # death_timeout=240,
                              log_directory='/tmp/maraspi/workers/')
         workers = 56
+
+        x_TL_AOI, y_TL_AOI = 16, 4
+        x_BR_AOI, y_BR_AOI = 26, 8
+
+        bando = ['X16Y04',
+                 'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
+                 'X24Y07',
+                 'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
+                 'X16Y08', 'X17Y08', 'X18Y08', 'X19Y08', 'X20Y08']
+
+    AOI = [x_TL_AOI, y_TL_AOI, x_BR_AOI, y_BR_AOI]
+    pxl_sx = 1 / 336.
+
+    s_date = datetime.datetime.today()
+    time_delta = 60
 
     archive_path = os.path.join(local_folder, 'archive.zarr')
     grid_path = os.path.join(local_folder, 'grid.geojson')
@@ -637,7 +706,8 @@ if __name__ == '__main__':
     password = args.password
     root_path = f'/data/cgl_vol2/SEN3-TOC/'
 
-    s = ProcessSettings(AOI, bando, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name, archive_path,
+    s = ProcessSettings(AOI, bando, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name,
+                        archive_path,
                         archive_flush,
                         server, port, user, password, root_path, )
     print('\rPrepare settings')
@@ -665,7 +735,7 @@ if __name__ == '__main__':
         cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1)
         client = Client(cluster)
         client.wait_for_workers(workers)
-    elif env == 'Linux' and HPC is False:
+    elif env == 'Linux' and args.hpc is False:
         cluster = LocalCluster(n_workers=workers, processes=True, threads_per_worker=1,
                                **{'local_directory': '/localdata'})
         client = Client(cluster)
@@ -696,7 +766,7 @@ if __name__ == '__main__':
     gvdm = gvdm.rio.write_crs("EPSG:4326")
     gvdm = gvdm.rename({'lat': 'y', 'lon': 'x'})
 
-    gvdm_nan = gvdm.where(~np.isnan(gvdm), -999)
+    gvdm_nan = gvdm.where(~np.isnan(gvdm), -999).astype(np.int32)
     gvdm_nan.rio.set_nodata(-999, inplace=True)
 
     print('\rWriting output')
