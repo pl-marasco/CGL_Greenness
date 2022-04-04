@@ -94,10 +94,13 @@ class ProcessSettings:
         return range(min, max + 1)
 
     def __10D_ref_date_finder(self, date):
-        day = date.day
-        if 1 <= day <= 11:
+        if date.day == 1:
+            if date.month == 1:
+                return datetime.datetime(date.year-1, 12, 21)
+            return datetime.datetime(date.year, date.month - 1, 21)
+        elif 1 < date.day <= 11:
             ref_day = 1
-        elif 11 <= day <= 21:
+        elif 11 < date.day <= 21:
             ref_day = 11
         else:
             ref_day = 21
@@ -255,7 +258,7 @@ async def lifter(s):
 
     workers = [asyncio.create_task(
         get_files(s.server, s.port, s.user, s.password, s.root_path, s.local_folder, tasks), name=str(i)) for i in
-        range(4)]
+        range(8)]
 
     await tasks.join()
 
@@ -333,8 +336,6 @@ def ds_opener(band_path):
         ds = ds.assign_coords({'time': time})
         ds = ds.expand_dims(dim='time', axis=0)
     return ds
-
-
 # endregion
 
 # region Multispectral
@@ -698,7 +699,7 @@ if __name__ == '__main__':
     grid_path = os.path.join(local_folder, 'grid.geojson')
     out_path = os.path.join(local_folder, 'results')
     out_name = 'MVP_S3_300'
-    archive_flush = False
+    archive_flush = True
 
     server = 'uservm.vito.be'
     port = 24033
