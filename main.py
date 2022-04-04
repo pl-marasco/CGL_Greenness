@@ -533,7 +533,7 @@ def filler(date, tile, s):
                               join='inner', )
 
     nominal_coords = {'time': [D10_ds.time[0].values.astype('datetime64[D]')], 'lat': D10_ds.lat, 'lon': D10_ds.lon, }
-    nominal_date = nominal_coords['time']
+    nominal_date = nominal_coords['time'][0]
 
     del D10_ds
     gc.collect()
@@ -550,18 +550,18 @@ def filler(date, tile, s):
     mask = np.isnan(NDVI).all(axis=0)
     argmax = NDVI.where(~mask, -999).argmax('time', skipna=True).astype(np.uint8)
 
-    max_NDVI = NDVI.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
-        dim='time', axis=0).rename('NDVI')
-    max_Blu = meanBlu.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
-        dim='time', axis=0).rename('Blu')
-    max_Green = meanGreen.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
-        dim='time', axis=0).rename('Green')
-    max_Red = meanRed.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
-        dim='time', axis=0).rename('Red')
-    max_NIR = meanNIR.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
-        dim='time', axis=0).rename('NIR')
-    max_SWIR = meanSWIR.isel({'time': argmax}).astype(np.float16).assign_coords({'time': nominal_date}).expand_dims(
-        dim='time', axis=0).rename('SWIR')
+    max_NDVI = NDVI.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('NDVI').astype(np.float32)
+    max_Blu = meanBlu.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('Blu').astype(np.float32)
+    max_Green = meanGreen.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('Green').astype(np.float32)
+    max_Red = meanRed.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('Red').astype(np.float32)
+    max_NIR = meanNIR.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('NIR').astype(np.float32)
+    max_SWIR = meanSWIR.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('SWIR').astype(np.float32)
 
     # _tif_writer(max_NDVI, 'NDVI', nominal_date[0])
 
@@ -573,7 +573,7 @@ def filler(date, tile, s):
     SWIR_rescaled = _rescale(max_SWIR[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
     NIR_rescaled = _rescale(max_NIR[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
     RED_rescaled = _rescale(max_Red[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
-    del (max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
+    # del (max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
     gc.collect()
 
     h, _, _ = _rgb2hsvcpu(RED_rescaled, NIR_rescaled, SWIR_rescaled)
@@ -582,15 +582,19 @@ def filler(date, tile, s):
 
     h = np.where(mask, np.nan, h)
     H = xr.DataArray(np.expand_dims(h, 0),
-                     coords={'time': nominal_date, 'lon': max_Red.lon.values, 'lat': max_Red.lat.values},
-                     dims=['band', 'lat', 'lon'])
+                     coords={'time': nominal_date,
+                             'lon': nominal_coords['lon'].values,
+                             'lat':nominal_coords['lat'].values},
+                     dims=['band', 'lat', 'lon'],
+                     name='H')
     del h
     gc.collect()
 
     archive = xr.merge([max_Blu, max_Green, max_Red, max_NIR, max_SWIR, H, max_NDVI, max_EVI])
-    os.makedirs(os.path.join(s.archive_path, nominal_date.__str__().replace('-', '')), exist_ok=True)
-    archive_name = os.path.join(os.path.join(s.archive_path,
-                                             'interm',
+    os.makedirs(os.path.join(s.local_folder, 'interm_prod'), exist_ok=True)
+    os.makedirs(os.path.join(s.local_folder, 'interm_prod', nominal_date.__str__().replace('-', '')), exist_ok=True)
+    archive_name = os.path.join(os.path.join(s.local_folder,
+                                             'interm_prod',
                                              nominal_date.__str__().replace('-', ''),
                                              f'{tile}.nc'))
     archive.to_netcdf(archive_name)
@@ -599,7 +603,7 @@ def filler(date, tile, s):
 
     # greenness
     gvi = _gvi(max_NDVI[0, :, :].to_numpy(), H[0, :, :].to_numpy())
-    del (max_NDVI, h,)
+    del (max_NDVI, H)
 
     gvi_time = np.expand_dims(gvi, 0)
     gvi_DS = xr.DataArray(gvi_time, coords=nominal_coords, name='GVI').to_dataset()
