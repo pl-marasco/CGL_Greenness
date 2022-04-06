@@ -601,7 +601,18 @@ def filler(date, tile, s):
                                              nominal_date.__str__().replace('-', ''),
                                              f'{tile}.nc'))
 
-    archive.to_netcdf(archive_name)
+    encoding = {"dtype": "f4", "zlib": True, "complevel": 7}
+    archive.to_netcdf(archive_name, format='NETCDF4',
+                      encoding={'max_Blue':  encoding,
+                                'max_Green': encoding,
+                                'max_Red':   encoding,
+                                'max_NIR':   encoding,
+                                'max_SWIR':  encoding,
+                                'H':         encoding,
+                                'max_NDVI':  encoding,
+                                'max_EVI':   encoding,
+                                })
+
     del (archive, max_EVI, max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
     gc.collect()
 
