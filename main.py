@@ -6,15 +6,16 @@ import glob
 import os
 import platform
 import sys
-from urllib.parse import urljoin
-
 import asyncssh
-import dask
 import numpy as np
 import pandas as pd
 import xarray as xr
+# import rioxarray
+
+from urllib.parse import urljoin
 from dask_jobqueue import PBSCluster
 from distributed import Client, LocalCluster
+import dask
 from numba import jit
 from skimage.color import rgb2hsv
 
@@ -534,6 +535,7 @@ def filler(date, tile, s):
 
     nominal_coords = {'time': [D10_ds.time[0].values.astype('datetime64[D]')], 'lat': D10_ds.lat, 'lon': D10_ds.lon, }
     nominal_date = nominal_coords['time'][0]
+    crs = D10_ds.crs
 
     del D10_ds
     gc.collect()
@@ -541,7 +543,8 @@ def filler(date, tile, s):
     EVI = _evi(meanNIR, meanRed, meanBlu)
     evi_mask = np.isnan(EVI).all(axis=0)
     evi_argmax = EVI.where(~evi_mask, -999).argmax('time', skipna=True).astype(np.uint8)
-    max_EVI = EVI.isel({'time': evi_argmax}).rename('EVI')
+    max_EVI = EVI.isel({'time': evi_argmax}).assign_coords({'time': nominal_date}).expand_dims(
+        dim='time', axis=0).rename('EVI')
 
     del (EVI, evi_mask, evi_argmax)
     gc.collect()
@@ -582,21 +585,22 @@ def filler(date, tile, s):
 
     h = np.where(mask, np.nan, h)
     H = xr.DataArray(np.expand_dims(h, 0),
-                     coords={'time': nominal_date,
+                     coords={'time': nominal_coords['time'],
                              'lon': nominal_coords['lon'].values,
-                             'lat':nominal_coords['lat'].values},
-                     dims=['band', 'lat', 'lon'],
+                             'lat': nominal_coords['lat'].values},
+                     dims=['time', 'lat', 'lon'],
                      name='H')
     del h
     gc.collect()
 
-    archive = xr.merge([max_Blu, max_Green, max_Red, max_NIR, max_SWIR, H, max_NDVI, max_EVI])
-    os.makedirs(os.path.join(s.local_folder, 'interm_prod'), exist_ok=True)
-    os.makedirs(os.path.join(s.local_folder, 'interm_prod', nominal_date.__str__().replace('-', '')), exist_ok=True)
+    archive = xr.merge([crs, max_Blu, max_Green, max_Red, max_NIR, max_SWIR, H, max_NDVI, max_EVI])
+    os.makedirs(os.path.join(s.local_folder, 'interm'), exist_ok=True)
+    os.makedirs(os.path.join(s.local_folder, 'interm', nominal_date.__str__().replace('-', '')), exist_ok=True)
     archive_name = os.path.join(os.path.join(s.local_folder,
-                                             'interm_prod',
+                                             'interm',
                                              nominal_date.__str__().replace('-', ''),
                                              f'{tile}.nc'))
+
     archive.to_netcdf(archive_name)
     del (archive, max_EVI, max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
     gc.collect()
@@ -675,7 +679,7 @@ if __name__ == '__main__':
     else:
         local_folder = r'/BGFS/COMMON/maraspi/S3'
         cluster = PBSCluster(cores=1,
-                             memory="64GB",
+                             memory="64GiB",
                              project='DASK_Parabellum',
                              queue='high',
                              local_directory='/local0/maraspi/',
