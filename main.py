@@ -289,12 +289,12 @@ async def download_list(D10_list, tile_range):
             D10_end = datetime.datetime.strptime(f'{D10_list[-1].year}{(D10_list[-1].month + 1).__str__().zfill(2)}01',
                                                  '%Y%m%d').date()
 
-    date_range = pd.date_range(D10_list[0], D10_end, freq='D')
+    date_range = pd.date_range(D10_list[0], D10_end, freq='D', inclusive='left')
     return list(zip(date_range, [tile_range] * date_range.size))
 
 
 def ds_opener(band_path):
-    ds = xr.open_dataset(band_path)
+    ds = xr.open_dataset(band_path, cache=True)
 
     Q_mask = ds.pixel_classif_flags == 1024
 
@@ -387,7 +387,7 @@ def _rgb2hsvcpu(R, G, B):
             G_ = G[y, x]
             B_ = B[y, x]
 
-            if np.isnan(R_ * B_ * B_):
+            if np.isnan(R_ * G_ * B_):
                 H[y, x] = np.NAN
                 S[y, x] = np.NAN
                 V[y, x] = np.NAN
@@ -499,6 +499,8 @@ def _tif_writer(ds, name, n_date):
 
 @dask.delayed
 def filler(date, tile, s):
+    # if tile != 'X21Y06' and date != pd.to_datetime('20220301'):
+    #     return
     print(f'Processing: {date}, {tile}')
     date = pd.to_datetime(date)
     if date.day == 1:
@@ -523,6 +525,7 @@ def filler(date, tile, s):
             tiles_path.append(ds_opener(p))
 
     D10_ds = xr.concat(tiles_path, dim='time', join='override')
+    del tiles_path
 
     meanBlu = xr.apply_ufunc(_bands_composite, D10_ds['Oa03_toc'], D10_ds['Oa04_toc'], join='inner')
     meanGreen = xr.apply_ufunc(_bands_composite, D10_ds['Oa05_toc'], D10_ds['Oa06_toc'], join='inner')
@@ -535,10 +538,11 @@ def filler(date, tile, s):
 
     nominal_coords = {'time': [D10_ds.time[0].values.astype('datetime64[D]')], 'lat': D10_ds.lat, 'lon': D10_ds.lon, }
     nominal_date = nominal_coords['time'][0]
-    crs = D10_ds.crs
+    crs_attrs = D10_ds.crs.attrs
+    crs_lat_attrs = D10_ds.crs.lat.attrs
+    crs_lon_attrs = D10_ds.crs.lon.attrs
 
     del D10_ds
-    gc.collect()
 
     EVI = _evi(meanNIR, meanRed, meanBlu)
     evi_mask = np.isnan(EVI).all(axis=0)
@@ -547,7 +551,6 @@ def filler(date, tile, s):
         dim='time', axis=0).rename('EVI')
 
     del (EVI, evi_mask, evi_argmax)
-    gc.collect()
 
     NDVI = _ndvi(meanNIR, meanRed)
     mask = np.isnan(NDVI).all(axis=0)
@@ -555,45 +558,51 @@ def filler(date, tile, s):
 
     max_NDVI = NDVI.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
         dim='time', axis=0).rename('NDVI').astype(np.float32)
+    del(NDVI)
     max_Blu = meanBlu.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
         dim='time', axis=0).rename('Blu').astype(np.float32)
+    del(meanBlu)
     max_Green = meanGreen.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
         dim='time', axis=0).rename('Green').astype(np.float32)
+    del(meanGreen)
     max_Red = meanRed.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
         dim='time', axis=0).rename('Red').astype(np.float32)
+    del(meanRed)
     max_NIR = meanNIR.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
         dim='time', axis=0).rename('NIR').astype(np.float32)
+    del(meanNIR)
     max_SWIR = meanSWIR.isel({'time': argmax}).assign_coords({'time': nominal_date}).expand_dims(
         dim='time', axis=0).rename('SWIR').astype(np.float32)
-
-    # _tif_writer(max_NDVI, 'NDVI', nominal_date[0])
-
-    del (NDVI, argmax, meanBlu, meanGreen, meanRed, meanNIR, meanSWIR)
-    gc.collect()
+    del(meanSWIR, argmax)
 
     # Blu_rescaled = _rescale(max_Blu.to_numpy(), -0.01, 1.6, 0, 255)
     # Green_rescaled = _rescale(max_Green.to_numpy(), -0.01, 1.6, 0, 255)
-    SWIR_rescaled = _rescale(max_SWIR[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
-    NIR_rescaled = _rescale(max_NIR[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
-    RED_rescaled = _rescale(max_Red[0, :, :].to_numpy(), -0.01, 1.6, 0, 255).astype(np.uint8)
+    # SWIR_rescaled = _rescale(max_SWIR[0, :, :].to_numpy(), -0.01, 1.6, 0, 1).astype(np.uint8)
+    # NIR_rescaled = _rescale(max_NIR[0, :, :].to_numpy(), -0.01, 1.6, 0, 1).astype(np.uint8)
+    # RED_rescaled = _rescale(max_Red[0, :, :].to_numpy(), -0.01, 1.6, 0, 1).astype(np.uint8)
     # del (max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
-    gc.collect()
 
-    h, _, _ = _rgb2hsvcpu(RED_rescaled, NIR_rescaled, SWIR_rescaled)
-    del (SWIR_rescaled, NIR_rescaled, RED_rescaled, _)
-    gc.collect()
+    # h, _, _ = _rgb2hsvcpu(RED_rescaled, NIR_rescaled, SWIR_rescaled)
+    # del (SWIR_rescaled, NIR_rescaled, RED_rescaled, _)
 
-    h = np.where(mask, np.nan, h)
+    h, _, _ = _rgb2hsvcpu(max_Red[0, :, :].to_numpy(), max_NIR[0, :, :].to_numpy(), max_SWIR[0, :, :].to_numpy())
+
+    h = np.where(mask, np.nan, h).round(2)
     H = xr.DataArray(np.expand_dims(h, 0),
                      coords={'time': nominal_coords['time'],
                              'lon': nominal_coords['lon'].values,
                              'lat': nominal_coords['lat'].values},
                      dims=['time', 'lat', 'lon'],
                      name='H')
-    del h
-    gc.collect()
+    del (h)
 
-    archive = xr.merge([crs, max_Blu, max_Green, max_Red, max_NIR, max_SWIR, H, max_NDVI, max_EVI])
+    archive = xr.merge([max_Blu, max_Green, max_Red, max_NIR, max_SWIR, H, max_NDVI, max_EVI])
+    archive.lat.attrs = crs_lat_attrs
+    archive.lon.attrs = crs_lon_attrs
+    archive.attrs = crs_attrs
+
+    del(max_EVI, max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
+
     os.makedirs(os.path.join(s.local_folder, 'interm'), exist_ok=True)
     os.makedirs(os.path.join(s.local_folder, 'interm', nominal_date.__str__().replace('-', '')), exist_ok=True)
     archive_name = os.path.join(os.path.join(s.local_folder,
@@ -601,20 +610,18 @@ def filler(date, tile, s):
                                              nominal_date.__str__().replace('-', ''),
                                              f'{tile}.nc'))
 
-    encoding = {"dtype": "f4", "zlib": True, "complevel": 7}
     archive.to_netcdf(archive_name, format='NETCDF4',
-                      encoding={'max_Blue':  encoding,
-                                'max_Green': encoding,
-                                'max_Red':   encoding,
-                                'max_NIR':   encoding,
-                                'max_SWIR':  encoding,
-                                'H':         encoding,
-                                'max_NDVI':  encoding,
-                                'max_EVI':   encoding,
+                      encoding={'Blu':   {"dtype": "float32", "zlib": True, "complevel": 7},
+                                'Green': {"dtype": "float32", "zlib": True, "complevel": 7},
+                                'Red':   {"dtype": "float32", "zlib": True, "complevel": 7},
+                                'NIR':   {"dtype": "float32", "zlib": True, "complevel": 7},
+                                'SWIR':  {"dtype": "float32", "zlib": True, "complevel": 7},
+                                'H':     {"dtype": "float32", "zlib": True, "complevel": 7},
+                                'NDVI':  {"dtype": "float32", "zlib": True, "complevel": 7},
+                                'EVI':   {"dtype": "float32", "zlib": True, "complevel": 7},
                                 })
 
-    del (archive, max_EVI, max_Blu, max_Green, max_Red, max_NIR, max_SWIR)
-    gc.collect()
+    del (archive)
 
     # greenness
     gvi = _gvi(max_NDVI[0, :, :].to_numpy(), H[0, :, :].to_numpy())
@@ -689,15 +696,16 @@ if __name__ == '__main__':
 
     else:
         local_folder = r'/BGFS/COMMON/maraspi/S3'
-        cluster = PBSCluster(cores=1,
-                             memory="64GiB",
+        cluster = PBSCluster(cores=4,
+                             memory="251gb",
+                             resource_spec='select=ncpus=32:mem=251gb',
                              project='DASK_Parabellum',
                              queue='high',
                              local_directory='/local0/maraspi/',
                              walltime='12:00:00',
                              # death_timeout=240,
                              log_directory='/tmp/maraspi/workers/')
-        workers = 56
+        workers = 20
 
         x_TL_AOI, y_TL_AOI = 16, 4
         x_BR_AOI, y_BR_AOI = 26, 8
