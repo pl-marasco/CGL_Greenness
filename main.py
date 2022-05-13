@@ -296,7 +296,93 @@ async def download_list(D10_list, tile_range):
 def ds_opener(band_path):
     ds = xr.open_dataset(band_path, cache=True)
 
-    Q_mask = ds.pixel_classif_flags == 1024
+    pixel_classif_flags = xr.apply_ufunc(_unpackbits, ds.pixel_classif_flags.astype(np.uint32),
+                                         kwargs={'num_bits': 10},
+                                         input_core_dims=[['lat', 'lon']],
+                                         output_core_dims=[['lat', 'lon', 'bit']],
+                                         vectorize=True,
+                                         dask='parallelized',
+                                         dask_gufunc_kwargs={'allow_rechunk': True,
+                                                             'output_sizes': {'bit': 10}}
+                                         )
+    quality_flags = xr.apply_ufunc(_unpackbits, ds.quality_flags.astype(np.uint32),
+                                   kwargs={'num_bits': 32},
+                                   input_core_dims=[['lat', 'lon']],
+                                   output_core_dims=[['lat', 'lon', 'bit']],
+                                   vectorize=True,
+                                   dask='parallelized',
+                                   dask_gufunc_kwargs={'allow_rechunk': True,
+                                                       'output_sizes': {'bit': 32}}
+                                   )
+
+    cloud_an = xr.apply_ufunc(_unpackbits, ds.cloud_an.astype(np.uint32),
+                                   kwargs={'num_bits': 14},
+                                   input_core_dims=[['lat', 'lon']],
+                                   output_core_dims=[['lat', 'lon', 'bit']],
+                                   vectorize=True,
+                                   dask='parallelized',
+                                   dask_gufunc_kwargs={'allow_rechunk': True,
+                                                       'output_sizes': {'bit': 14}}
+                                   )
+
+    AC_process = xr.apply_ufunc(_unpackbits, ds.AC_process_flag.astype(np.uint32),
+                                   kwargs={'num_bits': 6},
+                                   input_core_dims=[['lat', 'lon']],
+                                   output_core_dims=[['lat', 'lon', 'bit']],
+                                   vectorize=True,
+                                   dask='parallelized',
+                                   dask_gufunc_kwargs={'allow_rechunk': True,
+                                                       'output_sizes': {'bit': 6}}
+                                   )
+
+    Q_mask = xr.where(~((pixel_classif_flags[:, :, 0] == 1) |
+                        (pixel_classif_flags[:, :, 1] == 1) |
+                        (pixel_classif_flags[:, :, 2] == 1) |
+                        (pixel_classif_flags[:, :, 3] == 1) |
+                        (pixel_classif_flags[:, :, 4] == 1) |
+                        (pixel_classif_flags[:, :, 5] == 1) |
+                        (pixel_classif_flags[:, :, 6] == 1) |
+                        (pixel_classif_flags[:, :, 7] == 1) |
+                        (pixel_classif_flags[:, :, 8] == 1) |
+
+                        (quality_flags[:, :, 3] == 1) |
+                        (quality_flags[:, :, 4] == 1) |
+                        (quality_flags[:, :, 5] == 1) |
+                        (quality_flags[:, :, 6] == 1) |
+                        (quality_flags[:, :, 7] == 1) |
+                        (quality_flags[:, :, 8] == 1) |
+                        (quality_flags[:, :, 9] == 1) |
+                        (quality_flags[:, :, 10] == 1) |
+                        (quality_flags[:, :, 16] == 1) |
+                        (quality_flags[:, :, 17] == 1) |
+                        (quality_flags[:, :, 18] == 1) |
+                        (quality_flags[:, :, 23] == 1) |
+                        (quality_flags[:, :, 24] == 1) |
+                        (quality_flags[:, :, 25] == 1) |
+                        # (quality_flags[:, :, 31] == 0) |
+
+                        (cloud_an[:, :, 0] == 1) |
+                        (cloud_an[:, :, 1] == 1) |
+                        (cloud_an[:, :, 2] == 1) |
+                        (cloud_an[:, :, 3] == 1) |
+                        (cloud_an[:, :, 4] == 1) |
+                        (cloud_an[:, :, 5] == 1) |
+                        (cloud_an[:, :, 6] == 1) |
+                        (cloud_an[:, :, 7] == 1) |
+                        (cloud_an[:, :, 8] == 1) |
+                        (cloud_an[:, :, 9] == 1) |
+                        (cloud_an[:, :, 10] == 1) |
+                        (cloud_an[:, :, 11] == 1) |
+                        (cloud_an[:, :, 12] == 1) |
+                        (cloud_an[:, :, 13] == 1) |
+
+                        ((AC_process[:, :, 2] == 1) & (AC_process[:, :, 1] == 0)) |
+                        ((AC_process[:, :, 2] == 1) & (AC_process[:, :, 1] == 1)) |
+                        (AC_process[:, :, 3] == 1) |
+
+                        (ds.VZA_olci > 50) |
+                        (ds.VZA_slstr > 50)
+                        ), True, False)
 
     ds = ds.drop_vars(['Oa02_toc', 'Oa02_toc_error',
                        'Oa03_toc_error',
@@ -343,6 +429,12 @@ def ds_opener(band_path):
 def _bands_composite(*bands):
     return np.nanmean(bands, axis=0)
 
+def _unpackbits(x, num_bits):
+    xshape = list(x.shape)
+    x = x.reshape([-1, 1])
+    mask = 2 ** np.arange(num_bits, dtype=x.dtype).reshape([1, num_bits])
+    return np.fliplr((x & mask).astype(bool).astype(int)).reshape(xshape + [num_bits])
+
 
 @jit(cache=True, nopython=True)
 def _rescale(in_array, input_low, input_high, out_low=0, out_high=1):
@@ -354,7 +446,7 @@ def _nan_to_zero(array):
     return np.where(np.isnan(array), 0, array)
 
 
-@jit(cache=True, nopython=True)
+@jit(cache=True, nopython=True, error_model='numpy')
 def _rgb2hsvcpu(R, G, B):
     """
     RGB to HSV
@@ -499,9 +591,8 @@ def _tif_writer(ds, name, n_date):
 
 @dask.delayed
 def filler(date, tile, s):
-    # if tile != 'X21Y06' and date != pd.to_datetime('20220301'):
-    #     return
     print(f'Processing: {date}, {tile}')
+
     date = pd.to_datetime(date)
     if date.day == 1:
         D10_range = pd.date_range(date,
@@ -585,7 +676,7 @@ def filler(date, tile, s):
     # h, _, _ = _rgb2hsvcpu(RED_rescaled, NIR_rescaled, SWIR_rescaled)
     # del (SWIR_rescaled, NIR_rescaled, RED_rescaled, _)
 
-    h, _, _ = _rgb2hsvcpu(max_Red[0, :, :].to_numpy(), max_NIR[0, :, :].to_numpy(), max_SWIR[0, :, :].to_numpy())
+    h, _, _ = _rgb2hsvcpu(max_SWIR[0, :, :].to_numpy(), max_NIR[0, :, :].to_numpy(), max_Red[0, :, :].to_numpy())
 
     h = np.where(mask, np.nan, h).round(2)
     H = xr.DataArray(np.expand_dims(h, 0),
@@ -610,7 +701,7 @@ def filler(date, tile, s):
                                              nominal_date.__str__().replace('-', ''),
                                              f'{tile}.nc'))
 
-    archive.to_netcdf(archive_name, format='NETCDF4',
+    archive.to_netcdf(archive_name, format='NETCDF4', compute=True,
                       encoding={'Blu':   {"dtype": "float32", "zlib": True, "complevel": 7},
                                 'Green': {"dtype": "float32", "zlib": True, "complevel": 7},
                                 'Red':   {"dtype": "float32", "zlib": True, "complevel": 7},
@@ -677,10 +768,10 @@ if __name__ == '__main__':
         local_folder = r'e:\tmp\S3'
         workers = 1
 
-        x_TL_AOI, y_TL_AOI = 20, 5
-        x_BR_AOI, y_BR_AOI = 21, 6
+        x_TL_AOI, y_TL_AOI = 18, 6
+        x_BR_AOI, y_BR_AOI = 18, 6
 
-        bando = []
+        tiles_exclusion = []
     elif env == 'Linux' and args.hpc is False:
         local_folder = '/wad-3/CGL_Greenness'
         workers = 4
@@ -688,7 +779,7 @@ if __name__ == '__main__':
         x_TL_AOI, y_TL_AOI = 16, 4
         x_BR_AOI, y_BR_AOI = 26, 8
 
-        bando = ['X16Y04',
+        tiles_exclusion = ['X16Y04',
                  'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
                  'X24Y07',
                  'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
@@ -710,7 +801,7 @@ if __name__ == '__main__':
         x_TL_AOI, y_TL_AOI = 16, 4
         x_BR_AOI, y_BR_AOI = 26, 8
 
-        bando = ['X16Y04',
+        tiles_exclusion = ['X16Y04',
                  'X20Y04', 'X21Y04', 'X22Y04', 'X23Y04', 'X24Y04', 'X25Y04', 'X26Y04',
                  'X24Y07',
                  'X23Y08', 'X24Y08', 'X25Y08', 'X26Y08',
@@ -734,7 +825,7 @@ if __name__ == '__main__':
     password = args.password
     root_path = f'/data/cgl_vol2/SEN3-TOC/'
 
-    s = ProcessSettings(AOI, bando, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name,
+    s = ProcessSettings(AOI, tiles_exclusion, pxl_sx, grid_path, s_date, time_delta, local_folder, out_path, out_name,
                         archive_path,
                         archive_flush,
                         server, port, user, password, root_path, )
