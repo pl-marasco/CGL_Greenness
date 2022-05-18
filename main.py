@@ -335,7 +335,8 @@ def ds_opener(band_path):
                                                        'output_sizes': {'bit': 6}}
                                    )
 
-    Q_mask = xr.where(~((pixel_classif_flags[:, :, 0] == 1) |
+    Q_mask = xr.where((
+                        (pixel_classif_flags[:, :, 0] == 1) |
                         (pixel_classif_flags[:, :, 1] == 1) |
                         (pixel_classif_flags[:, :, 2] == 1) |
                         (pixel_classif_flags[:, :, 3] == 1) |
@@ -345,6 +346,7 @@ def ds_opener(band_path):
                         (pixel_classif_flags[:, :, 7] == 1) |
                         (pixel_classif_flags[:, :, 8] == 1) |
 
+                        (ds.quality_flags == 0) |
                         (quality_flags[:, :, 3] == 1) |
                         (quality_flags[:, :, 4] == 1) |
                         (quality_flags[:, :, 5] == 1) |
@@ -356,10 +358,12 @@ def ds_opener(band_path):
                         (quality_flags[:, :, 16] == 1) |
                         (quality_flags[:, :, 17] == 1) |
                         (quality_flags[:, :, 18] == 1) |
-                        (quality_flags[:, :, 23] == 1) |
-                        (quality_flags[:, :, 24] == 1) |
+                        #(quality_flags[:, :, 23] == 1) |
+                        #(quality_flags[:, :, 24] == 1) |
                         (quality_flags[:, :, 25] == 1) |
-                        # (quality_flags[:, :, 31] == 0) |
+                        (quality_flags[:, :, 27] == 1) |
+                        (quality_flags[:, :, 29] == 1) |
+                        (quality_flags[:, :, 31] == 0) |
 
                         (cloud_an[:, :, 0] == 1) |
                         (cloud_an[:, :, 1] == 1) |
@@ -378,11 +382,9 @@ def ds_opener(band_path):
 
                         ((AC_process[:, :, 2] == 1) & (AC_process[:, :, 1] == 0)) |
                         ((AC_process[:, :, 2] == 1) & (AC_process[:, :, 1] == 1)) |
-                        (AC_process[:, :, 3] == 1) |
+                        (AC_process[:, :, 3] == 1)
 
-                        (ds.VZA_olci > 50) |
-                        (ds.VZA_slstr > 50)
-                        ), True, False)
+                        ), False, True)
 
     ds = ds.drop_vars(['Oa02_toc', 'Oa02_toc_error',
                        'Oa03_toc_error',
@@ -417,7 +419,9 @@ def ds_opener(band_path):
                        'pixel_classif_flags',
                        'AC_process_flag'
                        ])
-    ds = ds.where(Q_mask, np.NAN)
+
+    ds = ds.where(Q_mask)
+
     time = pd.to_datetime(ds.attrs['time_coverage_start'])
     if not hasattr(ds, 'time'):
         ds = ds.assign_coords({'time': time})
@@ -433,7 +437,8 @@ def _unpackbits(x, num_bits):
     xshape = list(x.shape)
     x = x.reshape([-1, 1])
     mask = 2 ** np.arange(num_bits, dtype=x.dtype).reshape([1, num_bits])
-    return np.fliplr((x & mask).astype(bool).astype(int)).reshape(xshape + [num_bits])
+    # return np.fliplr((x & mask).astype(bool).astype(int)).reshape(xshape + [num_bits])
+    return (x & mask).astype(bool).astype(int).reshape(xshape + [num_bits])
 
 
 @jit(cache=True, nopython=True)
@@ -768,8 +773,8 @@ if __name__ == '__main__':
         local_folder = r'e:\tmp\S3'
         workers = 1
 
-        x_TL_AOI, y_TL_AOI = 18, 6
-        x_BR_AOI, y_BR_AOI = 18, 6
+        x_TL_AOI, y_TL_AOI = 21, 5
+        x_BR_AOI, y_BR_AOI = 21, 5
 
         tiles_exclusion = []
     elif env == 'Linux' and args.hpc is False:
